@@ -29,9 +29,34 @@
 		57CE0D5A2E384B9700E0A068 /* Free Photo CleanUp APPUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Free Photo CleanUp APPUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		57CE0D892E3AD02800E0A068 /* Exceptions for "Free Photo CleanUp APP" folder in "Free Photo CleanUp APPTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"Core ML Model/FastViTT8F16Headless.mlpackage",
+				"Core ML Model/MobileNetV2FP16.mlmodel",
+				"Core ML Model/Resnet50Headless.mlmodel",
+			);
+			target = 57CE0D4F2E384B9700E0A068 /* Free Photo CleanUp APPTests */;
+		};
+		57CE0D8A2E3AD02800E0A068 /* Exceptions for "Free Photo CleanUp APP" folder in "Free Photo CleanUp APPUITests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"Core ML Model/FastViTT8F16Headless.mlpackage",
+				"Core ML Model/MobileNetV2FP16.mlmodel",
+				"Core ML Model/Resnet50Headless.mlmodel",
+			);
+			target = 57CE0D592E384B9700E0A068 /* Free Photo CleanUp APPUITests */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		57CE0D422E384B9600E0A068 /* Free Photo CleanUp APP */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				57CE0D892E3AD02800E0A068 /* Exceptions for "Free Photo CleanUp APP" folder in "Free Photo CleanUp APPTests" target */,
+				57CE0D8A2E3AD02800E0A068 /* Exceptions for "Free Photo CleanUp APP" folder in "Free Photo CleanUp APPUITests" target */,
+			);
 			path = "Free Photo CleanUp APP";
 			sourceTree = "<group>";
 		};
@@ -397,6 +422,8 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Free-Photo-CleanUp-APP-Info.plist";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "写真を分析するためにアクセスが必要です";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -436,6 +463,8 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Free-Photo-CleanUp-APP-Info.plist";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "写真を分析するためにアクセスが必要です";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
