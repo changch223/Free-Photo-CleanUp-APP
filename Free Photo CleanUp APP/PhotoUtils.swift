@@ -15,7 +15,7 @@ let model = try! VNCoreMLModel(for: Resnet50Headless().model)
 func fetchFirst100Images(completion: @escaping ([UIImage]) -> Void) {
     var images: [UIImage] = []
     let fetchOptions = PHFetchOptions()
-    fetchOptions.fetchLimit = 5000 // 先多抓一點，等下手動過濾再只取 300
+    fetchOptions.fetchLimit = 2000 // 先多抓一點，等下手動過濾再只取 300
     fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
     let results = PHAsset.fetchAssets(with: .image, options: fetchOptions)
 
@@ -31,7 +31,7 @@ func fetchFirst100Images(completion: @escaping ([UIImage]) -> Void) {
         if asset.mediaSubtypes.contains(.photoScreenshot) {
             return
         }
-        if count >= 2000 {
+        if count >= 1000 {
             stop.pointee = true
             return
         }

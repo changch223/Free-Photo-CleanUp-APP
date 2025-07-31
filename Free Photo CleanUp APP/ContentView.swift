@@ -40,6 +40,7 @@ struct ContentView: View {
     var body: some View {
         NavigationView {
             VStack {
+                
                 Picker("分類", selection: $selectedCategory) {
                     ForEach(PhotoCategory.allCases) { cat in
                         Text(cat.rawValue).tag(cat)
@@ -96,6 +97,7 @@ struct ContentView: View {
                         }
                     }
                 }
+                
                 
                 if showResults {
                     NavigationLink("Show Similar Images", destination: SimilarImagesView(similarPairs: similarPairs, images: images))
@@ -250,9 +252,9 @@ struct ContentView: View {
                 } else {
                     print("❌ 第 \(index + 1) 張圖片向量提取失敗")
                 }
-                // ⬇️ 這裡才是每張完成時增加進度
+                // ⬇️ 必須明確放在主線程，不然 UI 不會 refresh
                 DispatchQueue.main.async {
-                    processingIndex += 1
+                    self.processingIndex += 1
                 }
                 group.leave()
             }
