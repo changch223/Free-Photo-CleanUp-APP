@@ -13,29 +13,27 @@ import SwiftData
 import Photos
 
 enum PhotoCategory: String, CaseIterable, Identifiable {
+    case photo = "照片"
     case selfie = "自拍"
-    case live = "原況照片"
     case portrait = "人像"
-    case timelapse = "縮時攝影"
-    case slow = "慢動作"
-    case burst = "連拍"
-    case screenshot = "截圖"
+    case screenshot = "銀幕截圖"
+    case video = "影片"
     case screenRecording = "螢幕錄影"
-
     var id: String { rawValue }
 }
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var items: [Item]
-
+    
     @State private var images: [UIImage] = []
     @State private var similarPairs: [(Int, Int)] = []
     @State private var showResults = false
     @State private var isProcessing = false
     @State private var showAlert = false
     @State private var selectedCategory: PhotoCategory = .selfie
-
+    @State private var categoryCounts: [PhotoCategory: Int] = [:]
+    
     var body: some View {
         NavigationView {
             VStack {
@@ -47,9 +45,14 @@ struct ContentView: View {
                 .pickerStyle(.segmented)
                 .padding()
                 
+                Text("本分類共 \(categoryCounts[selectedCategory] ?? 0) 張照片")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                
                 Button("載入分類圖片") {
                     fetchAssets(for: selectedCategory) { assets in
                         loadImages(from: assets)
+                        categoryCounts[selectedCategory] = assets.count
                     }
                 }
                 
@@ -88,6 +91,9 @@ struct ContentView: View {
                     NavigationLink("Show Similar Images", destination: SimilarImagesView(similarPairs: similarPairs, images: images))
                 }
             }
+            .onAppear {
+                loadAllCategoryCounts()
+            }
             .navigationTitle("Free Photo CleanUp")
             .padding()
             .alert("未找到任何圖片，請確認您的相簿有照片並允許取用權限。", isPresented: $showAlert) {
@@ -95,13 +101,15 @@ struct ContentView: View {
             }
         }
     }
-
+    
+    // MARK: - 最終分類邏輯
     func fetchAssets(for category: PhotoCategory, completion: @escaping ([PHAsset]) -> Void) {
         let options = PHFetchOptions()
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
         
         switch category {
         case .selfie:
+            // iOS 內建「自拍」
             let collection = PHAssetCollection.fetchAssetCollections(
                 with: .smartAlbum,
                 subtype: .smartAlbumSelfPortraits,
@@ -113,40 +121,67 @@ struct ContentView: View {
             }
             completion(arr)
             
-        case .burst:
-            options.predicate = NSPredicate(format: "representsBurst == YES")
-            fallthrough
-            
-        case .live, .portrait, .timelapse, .slow, .screenshot, .screenRecording:
-            // 原有 bitmask predicate 方法
-            var mask: UInt = 0
-            switch category {
-            case .live:
-                mask = PHAssetMediaSubtype.photoLive.rawValue
-            case .portrait:
-                mask = PHAssetMediaSubtype.photoDepthEffect.rawValue
-            case .timelapse:
-                mask = PHAssetMediaSubtype.videoTimelapse.rawValue
-            case .slow:
-                mask = PHAssetMediaSubtype.videoHighFrameRate.rawValue
-            case .screenshot:
-                mask = PHAssetMediaSubtype.photoScreenshot.rawValue
-            case .screenRecording:
-                mask = 524288
-            default:
-                break
-            }
-            if mask > 0 {
-                options.predicate = NSPredicate(format: "mediaSubtypes & %d != 0", Int(mask))
-            }
-            let mediaType: PHAssetMediaType =
-            (category == .timelapse || category == .slow || category == .screenRecording) ? .video : .image
-            let fetchResult = PHAsset.fetchAssets(with: mediaType, options: options)
+        case .portrait:
+            // 景深相片
+            options.predicate = NSPredicate(format: "mediaSubtypes & %d != 0", PHAssetMediaSubtype.photoDepthEffect.rawValue)
+            let fetchResult = PHAsset.fetchAssets(with: .image, options: options)
             var arr: [PHAsset] = []
             fetchResult.enumerateObjects { asset, _, _ in arr.append(asset) }
             completion(arr)
+            
+        case .screenshot:
+            // 銀幕截圖
+            options.predicate = NSPredicate(format: "mediaSubtypes & %d != 0", PHAssetMediaSubtype.photoScreenshot.rawValue)
+            let fetchResult = PHAsset.fetchAssets(with: .image, options: options)
+            var arr: [PHAsset] = []
+            fetchResult.enumerateObjects { asset, _, _ in arr.append(asset) }
+            completion(arr)
+            
+        case .screenRecording:
+            // 螢幕錄影 (官方 bitmask 524288)
+            options.predicate = NSPredicate(format: "mediaSubtypes & %d != 0", 524288)
+            let fetchResult = PHAsset.fetchAssets(with: .video, options: options)
+            var arr: [PHAsset] = []
+            fetchResult.enumerateObjects { asset, _, _ in arr.append(asset) }
+            completion(arr)
+            
+        case .video:
+            // 影片（排除螢幕錄影）
+            let allVideos = PHAsset.fetchAssets(with: .video, options: options)
+            var arr: [PHAsset] = []
+            allVideos.enumerateObjects { asset, _, _ in
+                if asset.mediaSubtypes.rawValue & 524288 == 0 {
+                    arr.append(asset)
+                }
+            }
+            completion(arr)
+            
+        case .photo:
+            // 取得所有 selfie asset identifier
+            let selfieCollection = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: .smartAlbumSelfPortraits, options: nil)
+            var selfieIds: Set<String> = []
+            selfieCollection.enumerateObjects { col, _, _ in
+                let selfieAssets = PHAsset.fetchAssets(in: col, options: nil)
+                selfieAssets.enumerateObjects { asset, _, _ in
+                    selfieIds.insert(asset.localIdentifier)
+                }
+            }
+            
+            // 取得所有照片，排除 selfie/portrait/screenshot
+            let allImages = PHAsset.fetchAssets(with: .image, options: options)
+            var arr: [PHAsset] = []
+            allImages.enumerateObjects { asset, _, _ in
+                let isSelfie = selfieIds.contains(asset.localIdentifier)
+                let isPortrait = asset.mediaSubtypes.contains(.photoDepthEffect)
+                let isScreenshot = asset.mediaSubtypes.contains(.photoScreenshot)
+                if !isSelfie && !isPortrait && !isScreenshot {
+                    arr.append(asset)
+                }
+            }
+            completion(arr)
         }
     }
+
 
 
     func loadImages(from assets: [PHAsset]) {
@@ -181,6 +216,16 @@ struct ContentView: View {
         }
     }
 
+    func loadAllCategoryCounts() {
+        for category in PhotoCategory.allCases {
+            fetchAssets(for: category) { assets in
+                DispatchQueue.main.async {
+                    categoryCounts[category] = assets.count
+                }
+            }
+        }
+    }
+    
     func processImages() {
         var embeddings: [[Float]] = Array(repeating: [], count: images.count)
         let group = DispatchGroup()
