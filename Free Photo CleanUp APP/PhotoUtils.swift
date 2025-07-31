@@ -15,18 +15,28 @@ let model = try! VNCoreMLModel(for: Resnet50Headless().model)
 func fetchFirst100Images(completion: @escaping ([UIImage]) -> Void) {
     var images: [UIImage] = []
     let fetchOptions = PHFetchOptions()
-    fetchOptions.fetchLimit = 100
+    fetchOptions.fetchLimit = 5000 // 先多抓一點，等下手動過濾再只取 300
     fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
     let results = PHAsset.fetchAssets(with: .image, options: fetchOptions)
 
     let imageManager = PHImageManager.default()
     let options = PHImageRequestOptions()
     options.deliveryMode = .highQualityFormat
-    options.isSynchronous = false // ✅ 改為 false
+    options.isSynchronous = false
 
     let group = DispatchGroup()
+    var count = 0
+    results.enumerateObjects { asset, _, stop in
+        // 排除螢幕截圖
+        if asset.mediaSubtypes.contains(.photoScreenshot) {
+            return
+        }
+        if count >= 2000 {
+            stop.pointee = true
+            return
+        }
+        count += 1
 
-    results.enumerateObjects { asset, _, _ in
         group.enter()
         let targetSize = CGSize(width: 224, height: 224)
         imageManager.requestImage(for: asset, targetSize: targetSize, contentMode: .aspectFit, options: options) { image, _ in
@@ -41,6 +51,7 @@ func fetchFirst100Images(completion: @escaping ([UIImage]) -> Void) {
         completion(images)
     }
 }
+
 
 func extractEmbedding(from image: UIImage, completion: @escaping ([Float]?) -> Void) {
     guard let ciImage = CIImage(image: image) else {

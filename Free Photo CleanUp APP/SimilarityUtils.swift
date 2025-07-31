@@ -13,10 +13,15 @@ func cosineSimilarity(_ a: [Float], _ b: [Float]) -> Float {
     return dot / (normA * normB + 1e-8)
 }
 
-func findSimilarPairs(embeddings: [[Float]], threshold: Float = 0.50) -> [(Int, Int)] {
+func findSimilarPairs(embeddings: [[Float]], threshold: Float = 0.50, window: Int = 50) -> [(Int, Int)] {
     var pairs: [(Int, Int)] = []
-    for i in 0..<embeddings.count {
-        for j in (i+1)..<embeddings.count {
+    let n = embeddings.count
+    for i in 0..<n {
+        // 只跟自己後面 window 張比
+        let start = i + 1
+        let end = min(i + window, n - 1)
+        if start > end { continue }
+        for j in start...end {
             let sim = cosineSimilarity(embeddings[i], embeddings[j])
             if sim >= threshold {
                 pairs.append((i, j))
@@ -25,3 +30,4 @@ func findSimilarPairs(embeddings: [[Float]], threshold: Float = 0.50) -> [(Int, 
     }
     return pairs
 }
+

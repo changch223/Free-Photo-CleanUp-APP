@@ -33,6 +33,9 @@ struct ContentView: View {
     @State private var showAlert = false
     @State private var selectedCategory: PhotoCategory = .selfie
     @State private var categoryCounts: [PhotoCategory: Int] = [:]
+    @State private var processingIndex: Int = 0
+    @State private var processingTotal: Int = 0
+    
     
     var body: some View {
         NavigationView {
@@ -70,6 +73,13 @@ struct ContentView: View {
                 
                 if isProcessing {
                     ProgressView("Analyzing photos...")
+                        .padding(.bottom, 8)
+                    if processingTotal > 0 {
+                        let percent = Int(Double(processingIndex) / Double(processingTotal) * 100)
+                        Text("進度：\(processingIndex)/\(processingTotal)（\(percent)%）")
+                            .font(.subheadline)
+                            .foregroundColor(.blue)
+                    }
                 } else {
                     Button("Start Similarity Check") {
                         isProcessing = true
@@ -181,9 +191,9 @@ struct ContentView: View {
             completion(arr)
         }
     }
-
-
-
+    
+    
+    
     func loadImages(from assets: [PHAsset]) {
         images.removeAll()
         let manager = PHImageManager.default()
@@ -200,14 +210,14 @@ struct ContentView: View {
             }
         }
     }
-
+    
     private func addItem() {
         withAnimation {
             let newItem = Item(timestamp: Date())
             modelContext.insert(newItem)
         }
     }
-
+    
     private func deleteItems(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
@@ -215,7 +225,7 @@ struct ContentView: View {
             }
         }
     }
-
+    
     func loadAllCategoryCounts() {
         for category in PhotoCategory.allCases {
             fetchAssets(for: category) { assets in
@@ -229,16 +239,20 @@ struct ContentView: View {
     func processImages() {
         var embeddings: [[Float]] = Array(repeating: [], count: images.count)
         let group = DispatchGroup()
+        processingTotal = images.count
+        processingIndex = 0
 
         for (index, img) in images.enumerated() {
-            print("🔄 開始處理第 \(index + 1) 張圖")
-
             group.enter()
             extractEmbedding(from: img) { vector in
                 if let v = vector {
                     embeddings[index] = v
                 } else {
                     print("❌ 第 \(index + 1) 張圖片向量提取失敗")
+                }
+                // ⬇️ 這裡才是每張完成時增加進度
+                DispatchQueue.main.async {
+                    processingIndex += 1
                 }
                 group.leave()
             }
@@ -247,16 +261,15 @@ struct ContentView: View {
         group.notify(queue: .main) {
             print("📦 向量樣本：\(embeddings.first ?? [])")
             print("🧠 相似度計算開始")
-
-            similarPairs = findSimilarPairs(embeddings: embeddings, threshold: 0.97)
-
+            similarPairs = findSimilarPairs(embeddings: embeddings, threshold: 0.97, window: 50)
             print("📸 找到相似圖片組合數：\(similarPairs.count)")
             for pair in similarPairs {
                 print("🔗 \(pair.0) 與 \(pair.1) 是相似圖片")
             }
-
             showResults = true
             isProcessing = false
+            processingIndex = 0
+            processingTotal = 0
         }
     }
 }
