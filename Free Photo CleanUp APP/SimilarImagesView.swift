@@ -11,57 +11,104 @@ struct SimilarImagesView: View {
     let similarPairs: [(Int, Int)]
     let images: [UIImage]
     
-    @State private var selectedKeep: [Int: Set<Int>] = [:]  // groupIndex: Set<imageIndex>
+    @State private var selectedKeep: [Int: Set<Int>] = [:]  // groupIdx: Set<imageIndex>
     
+    // 相似照片分組
     var grouped: [[Int]] {
         groupSimilarImages(pairs: similarPairs)
     }
     
+    // 計算所有要保留的 index
+    var allKeepIndices: Set<Int> {
+        Set(selectedKeep.values.flatMap { $0 })
+    }
+    // 計算所有預計要刪除的 index
+    var allDeleteIndices: [Int] {
+        grouped.flatMap { group in
+            let groupIdx = grouped.firstIndex(of: group) ?? 0
+            return group.filter { !(selectedKeep[groupIdx]?.contains($0) ?? false) }
+        }
+    }
+    
     var body: some View {
-        List {
-            ForEach(Array(grouped.enumerated()), id: \.offset) { (groupIdx, group) in
-                VStack(alignment: .leading) {
-                    HStack {
-                        ForEach(group, id: \.self) { idx in
-                            ZStack(alignment: .topTrailing) {
-                                Image(uiImage: images[idx])
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(width: 80, height: 80)
-                                    .border(selectedKeep[groupIdx]?.contains(idx) == true ? Color.green : Color.clear, width: 2)
-                                    .onTapGesture {
-                                        // 選擇保留
-                                        if selectedKeep[groupIdx]?.contains(idx) == true {
-                                            selectedKeep[groupIdx]?.remove(idx)
-                                        } else {
-                                            // 只允許多選（可改成只選一個）
-                                            selectedKeep[groupIdx, default: []].insert(idx)
+        ZStack(alignment: .bottom) {
+            ScrollView {
+                VStack(spacing: 18) {
+                    ForEach(Array(grouped.enumerated()), id: \.offset) { (groupIdx, group) in
+                        VStack(alignment: .leading, spacing: 6) {
+                            // 橫向滑動
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 10) {
+                                    ForEach(group, id: \.self) { idx in
+                                        ZStack(alignment: .topTrailing) {
+                                            Image(uiImage: images[idx])
+                                                .resizable()
+                                                .scaledToFill()
+                                                .frame(width: 80, height: 80)
+                                                .clipped()
+                                                .cornerRadius(12)
+                                                .shadow(radius: 2)
+                                                .overlay(
+                                                    RoundedRectangle(cornerRadius: 12)
+                                                        .stroke(selectedKeep[groupIdx]?.contains(idx) == true ? Color.green : Color.gray.opacity(0.3), lineWidth: 3)
+                                                )
+                                                .onTapGesture {
+                                                    if selectedKeep[groupIdx]?.contains(idx) == true {
+                                                        selectedKeep[groupIdx]?.remove(idx)
+                                                    } else {
+                                                        selectedKeep[groupIdx, default: []].insert(idx)
+                                                    }
+                                                }
+                                            if selectedKeep[groupIdx]?.contains(idx) == true {
+                                                Image(systemName: "checkmark.circle.fill")
+                                                    .foregroundColor(.green)
+                                                    .offset(x: -5, y: 5)
+                                            }
                                         }
                                     }
-                                if selectedKeep[groupIdx]?.contains(idx) == true {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundColor(.green)
-                                        .offset(x: -5, y: 5)
                                 }
+                                .padding(.horizontal, 10)
                             }
+                            Text("已選擇保留：\(selectedKeep[groupIdx]?.count ?? 0) / \(group.count)")
+                                .font(.caption2)
+                                .foregroundColor(.gray)
+                                .padding(.leading, 10)
                         }
-                    }
-                    HStack {
-                        Text("保留: \(selectedKeep[groupIdx]?.map { "\($0+1)" }.joined(separator: ", ") ?? "")")
-                            .font(.caption)
-                        Spacer()
-                        Button("刪除此組未勾選照片") {
-                            let keeps = selectedKeep[groupIdx] ?? []
-                            let toDelete = group.filter { !keeps.contains($0) }
-                            // 這裡觸發你的刪除流程（記錄 index or asset identifier 再呼叫 Photos 刪除）
-                            print("要刪除這組:", toDelete)
-                        }
-                        .foregroundColor(.red)
-                        .disabled((selectedKeep[groupIdx]?.count ?? 0) == group.count)
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.top)
+                .padding(.bottom, 60) // 為下方 bar 預留空間
             }
+            
+            // --- 底部固定 bar ---
+            VStack {
+                Divider()
+                HStack {
+                    Text("保留 \(allKeepIndices.count) 張，預計刪除 \(allDeleteIndices.count) 張")
+                        .font(.footnote)
+                    Spacer()
+                    Button(action: {
+                        // TODO: 呼叫批次刪除流程
+                        print("批次刪除這些 index:", allDeleteIndices)
+                    }) {
+                        Text("批次刪除")
+                            .fontWeight(.bold)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 8)
+                            .background(allDeleteIndices.isEmpty ? Color.gray : Color.red)
+                            .foregroundColor(.white)
+                            .cornerRadius(16)
+                    }
+                    .disabled(allDeleteIndices.isEmpty)
+                }
+                .padding()
+                .background(.ultraThinMaterial)
+                .cornerRadius(16)
+                .shadow(radius: 5)
+                .padding(.horizontal)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, 0)
         }
         .navigationTitle("連續相似群組")
         .onAppear {
@@ -78,6 +125,7 @@ struct SimilarImagesView: View {
 }
 
 
+/// 分群邏輯保留原有
 func groupSimilarImages(pairs: [(Int, Int)]) -> [[Int]] {
     var groups: [[Int]] = []
     var used = Set<Int>()
