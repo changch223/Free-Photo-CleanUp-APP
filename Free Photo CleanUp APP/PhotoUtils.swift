@@ -34,17 +34,7 @@ func fetchAssets(for category: PhotoCategory) async -> [PHAsset] {
         options.predicate = NSPredicate(format: "mediaSubtypes & %d != 0", PHAssetMediaSubtype.photoScreenshot.rawValue)
         let fetchResult = PHAsset.fetchAssets(with: .image, options: options)
         fetchResult.enumerateObjects { asset, _, _ in arr.append(asset) }
-    case .screenRecording:
-        options.predicate = NSPredicate(format: "mediaSubtypes & %d != 0", 524288)
-        let fetchResult = PHAsset.fetchAssets(with: .video, options: options)
-        fetchResult.enumerateObjects { asset, _, _ in arr.append(asset) }
-    case .video:
-        let allVideos = PHAsset.fetchAssets(with: .video, options: options)
-        allVideos.enumerateObjects { asset, _, _ in
-            if asset.mediaSubtypes.rawValue & 524288 == 0 {
-                arr.append(asset)
-            }
-        }
+ 
     case .photo:
         let selfieCollection = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: .smartAlbumSelfPortraits, options: nil)
         var selfieIds: Set<String> = []

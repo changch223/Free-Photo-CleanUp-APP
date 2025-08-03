@@ -11,8 +11,6 @@ enum PhotoCategory: String, CaseIterable, Identifiable, Codable {
     case selfie = "自拍"
     case portrait = "人像"
     case screenshot = "銀幕截圖"
-    case video = "影片"
-    case screenRecording = "螢幕錄影"
     var id: String { rawValue }
 }
 
@@ -65,7 +63,7 @@ struct ContentView: View {
                             .font(.subheadline)
                             .foregroundColor(.gray)
                             .padding(.bottom, 16)
-                        Button(action: { scanAllCategories() }) {
+                        Button(action: { startScan(selected: nil) }) {
                             HStack {
                                 Image(systemName: "magnifyingglass")
                                 Text("一鍵掃描全部照片重複")
@@ -249,35 +247,84 @@ struct ContentView: View {
     }
     
     // MARK: - 扫描核心流程
+    // 扫描全部分类时，提前统计所有要处理的照片总数
     func startScan(selected: PhotoCategory?) {
         let categories: [PhotoCategory] = selected == nil ? PhotoCategory.allCases : [selected!]
         isProcessing = true
-        processingTotal = categories.map { categoryCounts[$0] ?? 0 }.reduce(0, +)
         processingIndex = 0
 
         Task {
+            // 計算唯一資產數
+            var uniqueAssetIds = Set<String>()
+            var allAssetsByCategory: [PhotoCategory: [PHAsset]] = [:]
             for cat in categories {
-                // 1. 取 assets
                 let assets = await fetchAssetsAsync(for: cat)
-                // 2. 取 images
-                let images = await loadImages(from: assets)
-                // 3. 存 images 到本地
+                allAssetsByCategory[cat] = assets
+                uniqueAssetIds.formUnion(assets.map { $0.localIdentifier })
+            }
+            processingTotal = uniqueAssetIds.count
+
+            // 實際掃描每個分類
+            for cat in categories {
+                guard let assets = allAssetsByCategory[cat] else { continue }
+                let images = await loadImagesWithProgress(from: assets)
                 saveImagesToDisk(images, for: cat)
-                // 4. 計算 embedding
-                let embeddings = await batchExtractEmbeddings(images: images)
-                // 5. 找相似 pairs、分組
+                let embeddings = await batchExtractEmbeddingsWithProgress(images: images)
                 let pairs = findSimilarPairs(embeddings: embeddings, threshold: 0.97, window: 50)
                 let groups = groupSimilarImages(pairs: pairs)
                 let dupCount = groups.flatMap{$0}.count
-                // 6. 儲存掃描結果
                 scanResults[cat] = ScanResult(date: Date(), duplicateCount: dupCount, lastGroups: groups)
-
-                processingIndex += images.count // 或 +1 依你需要
             }
             isProcessing = false
             saveScanResultsToLocal()
         }
     }
+
+    
+    func batchExtractEmbeddingsWithProgress(images: [UIImage]) async -> [[Float]] {
+        var result: [[Float]] = []
+        for img in images {
+            if let emb = await extractEmbedding(from: img) {   // 這裡直接 await
+                result.append(emb)
+            }
+            await MainActor.run {
+                self.processingIndex += 1 // 再+1
+            }
+        }
+        return result
+    }
+
+
+
+    
+    func loadImagesWithProgress(from assets: [PHAsset]) async -> [UIImage] {
+        await withCheckedContinuation { continuation in
+            var loadedImages: [UIImage] = []
+            let manager = PHImageManager.default()
+            let reqOpts = PHImageRequestOptions()
+            reqOpts.isSynchronous = false
+            reqOpts.deliveryMode = .highQualityFormat
+
+            let group = DispatchGroup()
+            for asset in assets {
+                group.enter()
+                manager.requestImage(for: asset, targetSize: CGSize(width: 224, height: 224),
+                                     contentMode: .aspectFit, options: reqOpts) { img, _ in
+                    if let img = img { loadedImages.append(img) }
+                    // ✅ 這裡+1
+                    DispatchQueue.main.async {
+                        self.processingIndex += 1
+                    }
+                    group.leave()
+                }
+            }
+            group.notify(queue: .main) {
+                continuation.resume(returning: loadedImages)
+            }
+        }
+    }
+
+
     
     // 你可以包裝原本 fetchAssets(for:completion:) 成 async 版本
     func fetchAssetsAsync(for category: PhotoCategory) async -> [PHAsset] {
@@ -387,21 +434,6 @@ struct ContentView: View {
             let fetchResult = PHAsset.fetchAssets(with: .image, options: options)
             var arr: [PHAsset] = []
             fetchResult.enumerateObjects { asset, _, _ in arr.append(asset) }
-            completion(arr)
-        case .screenRecording:
-            options.predicate = NSPredicate(format: "mediaSubtypes & %d != 0", 524288)
-            let fetchResult = PHAsset.fetchAssets(with: .video, options: options)
-            var arr: [PHAsset] = []
-            fetchResult.enumerateObjects { asset, _, _ in arr.append(asset) }
-            completion(arr)
-        case .video:
-            let allVideos = PHAsset.fetchAssets(with: .video, options: options)
-            var arr: [PHAsset] = []
-            allVideos.enumerateObjects { asset, _, _ in
-                if asset.mediaSubtypes.rawValue & 524288 == 0 {
-                    arr.append(asset)
-                }
-            }
             completion(arr)
         case .photo:
             let selfieCollection = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: .smartAlbumSelfPortraits, options: nil)
