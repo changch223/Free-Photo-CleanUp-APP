@@ -5,6 +5,7 @@
 //  Created by chang chiawei on 2025-07-30.
 //
 
+import Foundation
 import Photos
 import UIKit
 import Vision
@@ -12,68 +13,153 @@ import CoreML
 
 let model = try! VNCoreMLModel(for: Resnet50Headless().model)
 
-func fetchFirst100Images(completion: @escaping ([UIImage]) -> Void) {
-    var images: [UIImage] = []
-    let fetchOptions = PHFetchOptions()
-    fetchOptions.fetchLimit = 300 // 先多抓一點，等下手動過濾再只取 300
-    fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-    let results = PHAsset.fetchAssets(with: .image, options: fetchOptions)
+// 取得分類全部照片
+func fetchAssets(for category: PhotoCategory) async -> [PHAsset] {
+    let options = PHFetchOptions()
+    options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+    var arr: [PHAsset] = []
 
-    let imageManager = PHImageManager.default()
-    let options = PHImageRequestOptions()
-    options.deliveryMode = .highQualityFormat
-    options.isSynchronous = false
-
-    let group = DispatchGroup()
-    var count = 0
-    results.enumerateObjects { asset, _, stop in
-        // 排除螢幕截圖
-        if asset.mediaSubtypes.contains(.photoScreenshot) {
-            return
+    switch category {
+    case .selfie:
+        let collection = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: .smartAlbumSelfPortraits, options: nil)
+        collection.enumerateObjects { col, _, _ in
+            let assets = PHAsset.fetchAssets(in: col, options: options)
+            assets.enumerateObjects { asset, _, _ in arr.append(asset) }
         }
-        if count >= 300 {
-            stop.pointee = true
-            return
-        }
-        count += 1
-
-        group.enter()
-        let targetSize = CGSize(width: 224, height: 224)
-        imageManager.requestImage(for: asset, targetSize: targetSize, contentMode: .aspectFit, options: options) { image, _ in
-            if let img = image {
-                images.append(img)
+    case .portrait:
+        options.predicate = NSPredicate(format: "mediaSubtypes & %d != 0", PHAssetMediaSubtype.photoDepthEffect.rawValue)
+        let fetchResult = PHAsset.fetchAssets(with: .image, options: options)
+        fetchResult.enumerateObjects { asset, _, _ in arr.append(asset) }
+    case .screenshot:
+        options.predicate = NSPredicate(format: "mediaSubtypes & %d != 0", PHAssetMediaSubtype.photoScreenshot.rawValue)
+        let fetchResult = PHAsset.fetchAssets(with: .image, options: options)
+        fetchResult.enumerateObjects { asset, _, _ in arr.append(asset) }
+    case .screenRecording:
+        options.predicate = NSPredicate(format: "mediaSubtypes & %d != 0", 524288)
+        let fetchResult = PHAsset.fetchAssets(with: .video, options: options)
+        fetchResult.enumerateObjects { asset, _, _ in arr.append(asset) }
+    case .video:
+        let allVideos = PHAsset.fetchAssets(with: .video, options: options)
+        allVideos.enumerateObjects { asset, _, _ in
+            if asset.mediaSubtypes.rawValue & 524288 == 0 {
+                arr.append(asset)
             }
-            group.leave()
+        }
+    case .photo:
+        let selfieCollection = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: .smartAlbumSelfPortraits, options: nil)
+        var selfieIds: Set<String> = []
+        selfieCollection.enumerateObjects { col, _, _ in
+            let selfieAssets = PHAsset.fetchAssets(in: col, options: nil)
+            selfieAssets.enumerateObjects { asset, _, _ in
+                selfieIds.insert(asset.localIdentifier)
+            }
+        }
+        let allImages = PHAsset.fetchAssets(with: .image, options: options)
+        allImages.enumerateObjects { asset, _, _ in
+            let isSelfie = selfieIds.contains(asset.localIdentifier)
+            let isPortrait = asset.mediaSubtypes.contains(.photoDepthEffect)
+            let isScreenshot = asset.mediaSubtypes.contains(.photoScreenshot)
+            if !isSelfie && !isPortrait && !isScreenshot {
+                arr.append(asset)
+            }
         }
     }
+    return arr
+}
 
-    group.notify(queue: .main) {
-        completion(images)
+// 取得資產圖
+func loadImages(from assets: [PHAsset]) async -> [UIImage] {
+    await withCheckedContinuation { continuation in
+        var images: [UIImage] = []
+        let manager = PHImageManager.default()
+        let reqOpts = PHImageRequestOptions()
+        reqOpts.isSynchronous = false
+        reqOpts.deliveryMode = .highQualityFormat
+        let group = DispatchGroup()
+        for asset in assets {
+            group.enter()
+            manager.requestImage(for: asset, targetSize: CGSize(width: 224, height: 224), contentMode: .aspectFill, options: reqOpts) { img, _ in
+                if let img = img { images.append(img) }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) {
+            continuation.resume(returning: images)
+        }
     }
 }
 
-
-func extractEmbedding(from image: UIImage, completion: @escaping ([Float]?) -> Void) {
-    guard let ciImage = CIImage(image: image) else {
-        completion(nil)
-        return
-    }
-
-    let handler = VNImageRequestHandler(ciImage: ciImage, options: [:])
-    let request = VNCoreMLRequest(model: model) { req, _ in
-        if let obs = req.results?.first as? VNCoreMLFeatureValueObservation,
-           let arr = obs.featureValue.multiArrayValue {
-            let floats = (0..<arr.count).map { Float(truncating: arr[$0]) }
-            completion(floats)
-        } else {
-            completion(nil)
+// 產生 embedding（單張圖）
+func extractEmbedding(from image: UIImage) async -> [Float]? {
+    await withCheckedContinuation { continuation in
+        guard let ciImage = CIImage(image: image) else {
+            continuation.resume(returning: nil)
+            return
+        }
+        let handler = VNImageRequestHandler(ciImage: ciImage, options: [:])
+        let request = VNCoreMLRequest(model: model) { req, _ in
+            if let obs = req.results?.first as? VNCoreMLFeatureValueObservation,
+               let arr = obs.featureValue.multiArrayValue {
+                let floats = (0..<arr.count).map { Float(truncating: arr[$0]) }
+                continuation.resume(returning: floats)
+            } else {
+                continuation.resume(returning: nil)
+            }
+        }
+        do {
+            try handler.perform([request])
+        } catch {
+            print("🔴 推論錯誤: \(error.localizedDescription)")
+            continuation.resume(returning: nil)
         }
     }
+}
 
-    do {
-        try handler.perform([request])
-    } catch {
-        print("🔴 推論錯誤: \(error.localizedDescription)")
-        completion(nil)
+// 批次產生所有 embedding
+func batchExtractEmbeddings(images: [UIImage]) async -> [[Float]] {
+    await withTaskGroup(of: [Float]?.self) { group in
+        for img in images {
+            group.addTask { await extractEmbedding(from: img) }
+        }
+        var results: [[Float]] = []
+        for await vector in group {
+            results.append(vector ?? [])
+        }
+        return results
     }
 }
+
+// 相似組找 groupSimilarImages
+func groupSimilarImages(pairs: [(Int, Int)]) -> [[Int]] {
+    var groups: [[Int]] = []
+    var used = Set<Int>()
+    for pair in pairs {
+        let (a, b) = pair
+        if used.contains(a) && used.contains(b) { continue }
+        var merged = false
+        for i in 0..<groups.count {
+            if groups[i].contains(a) {
+                groups[i].append(b)
+                used.insert(b)
+                merged = true
+                break
+            } else if groups[i].contains(b) {
+                groups[i].append(a)
+                used.insert(a)
+                merged = true
+                break
+            }
+        }
+        if !merged {
+            groups.append([a, b])
+            used.insert(a)
+            used.insert(b)
+        }
+    }
+    for i in 0..<groups.count {
+        groups[i] = Array(Set(groups[i])).sorted()
+    }
+    return groups.filter { $0.count > 1 }
+}
+
+

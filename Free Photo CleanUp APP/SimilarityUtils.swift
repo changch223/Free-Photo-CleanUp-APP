@@ -30,4 +30,3 @@ func findSimilarPairs(embeddings: [[Float]], threshold: Float = 0.50, window: In
     }
     return pairs
 }
-

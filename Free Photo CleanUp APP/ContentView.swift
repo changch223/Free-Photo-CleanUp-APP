@@ -22,6 +22,14 @@ struct ScanResult: Codable {
     var lastGroups: [[Int]]
 }
 
+struct CategorySummary: Identifiable {
+    var id: PhotoCategory { category }
+    var category: PhotoCategory
+    var name: String { category.rawValue }
+    var count: Int
+    var duplicateCount: Int
+}
+
 struct ContentView: View {
     // 狀態
     @State private var categoryCounts: [PhotoCategory: Int] = [:]
@@ -34,203 +42,287 @@ struct ContentView: View {
     @State private var processingTotal = 0
     @State private var scanningCategory: PhotoCategory? = nil
 
+    var summaries: [CategorySummary] {
+        PhotoCategory.allCases.map { cat in
+            let dupCount = scanResults[cat]?.duplicateCount ?? 0
+            return CategorySummary(category: cat, count: categoryCounts[cat] ?? 0, duplicateCount: dupCount)
+        }
+    }
+    
     // 本地快取 key
     let scanResultsKey = "ScanResults"
     let lastCleanupSpaceKey = "LastCleanupSpace"
 
     var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(spacing: 22) {
-                    Text("Free Photo CleanUp")
-                        .font(.largeTitle).fontWeight(.bold)
-                        .padding(.top, 24)
-                    Text("幫你找出手機裡的重複照片，一鍵清理釋放空間")
-                        .font(.subheadline)
-                        .foregroundColor(.gray)
-                        .padding(.bottom, 10)
-                    
-                    // 主掃描按鈕
-                    Button(action: { startScan(selected: nil) }) {
-                        HStack {
-                            Image(systemName: "magnifyingglass")
-                            Text("一鍵掃描全部照片重複")
-                        }
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(18)
-                        .shadow(radius: 3)
-                    }
-                    .padding(.horizontal)
-                    .padding(.bottom, 6)
-                    
-                    // 分類多選，顯示數量
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("選擇要掃描的分類（可多選）")
-                            .font(.subheadline).foregroundColor(.secondary)
-                        LazyVGrid(columns: Array(repeating: .init(.flexible()), count: 3), spacing: 14) {
-                            ForEach(PhotoCategory.allCases) { cat in
-                                Button(action: {
-                                    if selectedCategories.contains(cat) {
-                                        selectedCategories.remove(cat)
-                                    } else {
-                                        selectedCategories.insert(cat)
-                                    }
-                                }) {
-                                    VStack(spacing: 2) {
-                                        Text(cat.rawValue)
-                                            .fontWeight(.semibold)
-                                            .padding(.horizontal, 14)
-                                            .padding(.vertical, 8)
-                                            .background(selectedCategories.contains(cat) ? Color.orange : Color(.systemGray5))
-                                            .foregroundColor(selectedCategories.contains(cat) ? .white : .primary)
-                                            .cornerRadius(20)
-                                        Text("\(categoryCounts[cat, default: 0]) 張")
-                                            .font(.caption2)
-                                            .foregroundColor(.gray)
-                                    }
-                                }
-                                .buttonStyle(.plain)
+            NavigationView {
+                ScrollView {
+                    VStack(spacing: 22) {
+                        Text("Free Photo CleanUp")
+                            .font(.largeTitle)
+                            .fontWeight(.bold)
+                            .padding(.top, 24)
+                        Text("幫你找出手機裡的重複照片，一鍵清理釋放空間")
+                            .font(.subheadline)
+                            .foregroundColor(.gray)
+                            .padding(.bottom, 16)
+                        Button(action: { scanAllCategories() }) {
+                            HStack {
+                                Image(systemName: "magnifyingglass")
+                                Text("一鍵掃描全部照片重複")
                             }
-                        }
-                    }
-                    .padding(.horizontal)
-                    
-                    // 多分類掃描主按鈕
-                    Button(action: {
-                        if !selectedCategories.isEmpty {
-                            startScanMultiple(selected: Array(selectedCategories))
-                        }
-                    }) {
-                        Text("掃描所選分類")
                             .font(.headline)
                             .frame(maxWidth: .infinity)
                             .padding()
-                            .background(selectedCategories.isEmpty ? Color(.systemGray3) : Color.orange)
+                            .background(Color.blue)
                             .foregroundColor(.white)
-                            .cornerRadius(12)
-                    }
-                    .disabled(selectedCategories.isEmpty)
-                    .padding(.horizontal)
-                    .padding(.bottom, 8)
-                    
-                    // 分類摘要列表
-                    VStack(spacing: 10) {
-                        ForEach(PhotoCategory.allCases) { cat in
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(cat.rawValue).font(.body)
-                                    Text("共 \(categoryCounts[cat, default: 0]) 張").font(.caption).foregroundColor(.secondary)
-                                }
-                                Spacer()
-                                if let res = scanResults[cat], res.duplicateCount > 0 {
-                                    Text("重複 \(res.duplicateCount) 張")
-                                        .foregroundColor(.red)
-                                        .font(.caption)
-                                    NavigationLink("查看重複") {
-                                        // 用 pairsFromGroups + loadImagesForCategory 實作即可
-                                        SimilarImagesView(
-                                            similarPairs: pairsFromGroups(res.lastGroups),
-                                            images: loadImagesForCategory(cat)
-                                        )
+                            .cornerRadius(18)
+                            .shadow(radius: 3)
+                        }
+                        .padding(.horizontal)
+                        .padding(.bottom, 6)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("選擇要掃描的分類（可多選）")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
+                                ForEach(summaries) { cat in
+                                    Button(action: {
+                                        if selectedCategories.contains(cat.category) {
+                                            selectedCategories.remove(cat.category)
+                                        } else {
+                                            selectedCategories.insert(cat.category)
+                                        }
+                                    }) {
+                                        VStack(spacing: 2) {
+                                            Text(cat.name)
+                                                .fontWeight(.semibold)
+                                                .padding(.horizontal, 14)
+                                                .padding(.vertical, 8)
+                                                .background(selectedCategories.contains(cat.category) ? Color.orange : Color(.systemGray5))
+                                                .foregroundColor(selectedCategories.contains(cat.category) ? .white : .primary)
+                                                .cornerRadius(20)
+                                            Text("\(cat.count) 張")
+                                                .font(.caption2)
+                                                .foregroundColor(.gray)
+                                        }
                                     }
-                                    .font(.callout)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(Color(.systemGray5))
-                                    .cornerRadius(8)
-                                } else if let _ = scanResults[cat] {
-                                    Text("無重複")
-                                        .foregroundColor(.secondary)
-                                        .font(.caption)
-                                } else {
-                                    Text("尚未掃描")
-                                        .foregroundColor(.secondary)
-                                        .font(.caption)
+                                    .buttonStyle(.plain)
                                 }
                             }
-                            .padding(.horizontal, 6)
                         }
-                    }
-                    .padding(.top, 8)
-                    
-                    // 掃描進度條
-                    if isProcessing {
-                        VStack(spacing: 10) {
-                            Text("正在掃描 \(scanningCategory?.rawValue ?? "全部") \(processingIndex)/\(processingTotal)")
-                            ProgressView(value: Double(processingIndex), total: Double(processingTotal))
-                        }
-                        .padding()
-                    }
-                    
-                    Spacer()
-                }
-            }
-            .onAppear { loadAllCategoryCounts(); loadScanResultsFromLocal() }
-            .background(Color(.systemGroupedBackground))
-        }
-    }
-    
-    // MARK: - 扫描核心流程 (僅保留呼叫結構, 需串接你的embedding判重)
-    func startScan(selected: PhotoCategory?) {
-        scanningCategory = selected
-        isProcessing = true
-        processingIndex = 0
-        // 根據 selected 分類取得 assets
-        let categories: [PhotoCategory] = selected == nil ? PhotoCategory.allCases : [selected!]
-        processingTotal = categories.map { categoryCounts[$0] ?? 0 }.reduce(0, +)
-        
-        // 建議：根據分類、逐步分析（Demo只模擬結果）
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            for cat in categories {
-                // 你這裡實際應該是照片分析&分組，這邊只做demo
-                let demoRes = ScanResult(date: Date(), duplicateCount: Int.random(in: 2...12), lastGroups: [[1,2,3],[10,11]])
-                scanResults[cat] = demoRes
-            }
-            saveScanResultsToLocal()
-            isProcessing = false
-        }
-    }
-    
-    func startScanMultiple(selected: [PhotoCategory]) {
-         for cat in selected {
-             startScan(selected: cat)
-         }
-     }
-    
-    // MARK: - 本地存取
-    func saveScanResultsToLocal() {
-        if let data = try? JSONEncoder().encode(scanResults) {
-            UserDefaults.standard.set(data, forKey: scanResultsKey)
-        }
-        UserDefaults.standard.set(lastCleanupSpace, forKey: lastCleanupSpaceKey)
-    }
-    func loadScanResultsFromLocal() {
-        if let data = UserDefaults.standard.data(forKey: scanResultsKey),
-           let dict = try? JSONDecoder().decode([PhotoCategory: ScanResult].self, from: data) {
-            scanResults = dict
-        }
-        lastCleanupSpace = UserDefaults.standard.double(forKey: lastCleanupSpaceKey)
-    }
+                        .padding(.horizontal)
 
-    // 根據 lastGroups 產生 pairs 給 SimilarImagesView
-    func pairsFromGroups(_ groups: [[Int]]) -> [(Int,Int)] {
-        var pairs: [(Int,Int)] = []
-        for g in groups {
-            for i in 0..<(g.count-1) {
-                pairs.append((g[i], g[i+1]))
+                        Button(action: {
+                            startScanMultiple(selected: Array(selectedCategories))
+                        }) {
+                            Text("掃描所選分類")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(selectedCategories.isEmpty ? Color(.systemGray3) : Color.orange)
+                                .foregroundColor(.white)
+                                .cornerRadius(12)
+                        }
+                        .disabled(selectedCategories.isEmpty)
+                        .padding(.horizontal)
+                        .padding(.bottom, 10)
+
+
+                        VStack(spacing: 10) {
+                            ForEach(summaries) { cat in
+                                HStack {
+                                    VStack(alignment: .leading) {
+                                        Text(cat.name)
+                                        Text("共 \(cat.count) 張").font(.caption).foregroundColor(.secondary)
+                                    }
+                                    Spacer()
+                                    if let res = scanResults[cat.id], res.duplicateCount > 0 {
+                                        Text("重複 \(res.duplicateCount) 張")
+                                            .foregroundColor(.red).font(.caption)
+                                        NavigationLink("查看重複") {
+                                            let pairs = pairsFromGroups(res.lastGroups)
+                                            let imgs = loadImagesForCategory(cat.id)
+                                            SimilarImagesView(similarPairs: pairs, images: imgs)
+                                        }
+                                        .font(.callout)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(Color(.systemGray5))
+                                        .cornerRadius(8)
+                                    } else {
+                                        Text("無重複").foregroundColor(.secondary).font(.caption)
+                                    }
+                                }
+                                .padding(.horizontal, 6)
+                            }
+                        }
+                        .padding(.top, 8)
+
+                        if isProcessing {
+                            VStack {
+                                Text("掃描中 \(processingIndex)/\(processingTotal)")
+                                ProgressView(value: Double(processingIndex), total: Double(processingTotal))
+                            }.padding()
+                        }
+
+                        Spacer()
+                    }
+                }
+                .background(Color(.systemGroupedBackground))
+                .onAppear { Task { await refreshCategoryCounts() } }
+            }
+        }
+
+        // MARK: - 掃描邏輯
+        func scanAllCategories() {
+            isProcessing = true
+            processingTotal = PhotoCategory.allCases.count
+            processingIndex = 0
+
+            Task {
+                for cat in PhotoCategory.allCases {
+                    let result = await scanCategory(cat)
+                    scanResults[cat] = result
+                    processingIndex += 1
+                }
+                isProcessing = false
+                saveScanResultsToLocal()
+            }
+        }
+
+        func scanSelectedCategories(_ selected: [PhotoCategory]) {
+            isProcessing = true
+            processingTotal = selected.count
+            processingIndex = 0
+
+            Task {
+                for cat in selected {
+                    let result = await scanCategory(cat)
+                    scanResults[cat] = result
+                    processingIndex += 1
+                }
+                isProcessing = false
+                saveScanResultsToLocal()
+            }
+        }
+
+        func scanCategory(_ cat: PhotoCategory) async -> ScanResult {
+            let assets = await Free_Photo_CleanUp_APP.fetchAssets(for: cat)
+            let images = await loadImages(from: assets)
+            let embeddings = await batchExtractEmbeddings(images: images)
+            let pairs = findSimilarPairs(embeddings: embeddings, threshold: 0.97, window: 50)
+            let groups = groupSimilarImages(pairs: pairs)
+            let dupCount = groups.flatMap{$0}.count
+            return ScanResult(date: Date(), duplicateCount: dupCount, lastGroups: groups)
+        }
+
+        // --- 分類張數
+        func refreshCategoryCounts() async {
+            for cat in PhotoCategory.allCases {
+                let assets = await Free_Photo_CleanUp_APP.fetchAssets(for: cat)
+                await MainActor.run { categoryCounts[cat] = assets.count }
+            }
+        }
+
+        // --- 儲存/讀取本地 UserDefaults
+        func saveScanResultsToLocal() {
+            if let data = try? JSONEncoder().encode(scanResults) {
+                UserDefaults.standard.set(data, forKey: "ScanResults")
+            }
+        }
+        func loadScanResultsFromLocal() {
+            if let data = UserDefaults.standard.data(forKey: "ScanResults"),
+               let dict = try? JSONDecoder().decode([PhotoCategory: ScanResult].self, from: data) {
+                scanResults = dict
+            }
+        }
+
+    func pairsFromGroups(_ groups: [[Int]]) -> [(Int, Int)] {
+        var pairs: [(Int, Int)] = []
+        for group in groups {
+            for i in 0..<(group.count - 1) {
+                pairs.append((group[i], group[i+1]))
             }
         }
         return pairs
     }
-    // [須實作] 取得該分類所有 UIImage（你可用你的 loadImages 實現）
-    func loadImagesForCategory(_ cat: PhotoCategory) -> [UIImage] {
-        // TODO: 拿這個分類對應的所有 UIImage
-        return []
+    
+    // MARK: - 扫描核心流程
+    func startScan(selected: PhotoCategory?) {
+        let categories: [PhotoCategory] = selected == nil ? PhotoCategory.allCases : [selected!]
+        isProcessing = true
+        processingTotal = categories.map { categoryCounts[$0] ?? 0 }.reduce(0, +)
+        processingIndex = 0
+
+        Task {
+            for cat in categories {
+                // 1. 取 assets
+                let assets = await fetchAssetsAsync(for: cat)
+                // 2. 取 images
+                let images = await loadImages(from: assets)
+                // 3. 存 images 到本地
+                saveImagesToDisk(images, for: cat)
+                // 4. 計算 embedding
+                let embeddings = await batchExtractEmbeddings(images: images)
+                // 5. 找相似 pairs、分組
+                let pairs = findSimilarPairs(embeddings: embeddings, threshold: 0.97, window: 50)
+                let groups = groupSimilarImages(pairs: pairs)
+                let dupCount = groups.flatMap{$0}.count
+                // 6. 儲存掃描結果
+                scanResults[cat] = ScanResult(date: Date(), duplicateCount: dupCount, lastGroups: groups)
+
+                processingIndex += images.count // 或 +1 依你需要
+            }
+            isProcessing = false
+            saveScanResultsToLocal()
+        }
     }
+    
+    // 你可以包裝原本 fetchAssets(for:completion:) 成 async 版本
+    func fetchAssetsAsync(for category: PhotoCategory) async -> [PHAsset] {
+        await withCheckedContinuation { continuation in
+            fetchAssets(for: category) { assets in
+                continuation.resume(returning: assets)
+            }
+        }
+    }
+    
+    
+    func startScanMultiple(selected: [PhotoCategory]) {
+        isProcessing = true
+        processingTotal = selected.count
+        processingIndex = 0
+        Task {
+            for cat in selected {
+                await startScanOneCategory(cat)
+                processingIndex += 1
+            }
+            isProcessing = false
+            saveScanResultsToLocal()
+        }
+    }
+
+    // 把一個分類的掃描邏輯包成 async function
+    func startScanOneCategory(_ cat: PhotoCategory) async {
+        let assets = await fetchAssetsAsync(for: cat)
+        let images = await loadImages(from: assets)
+        saveImagesToDisk(images, for: cat)
+        let embeddings = await batchExtractEmbeddings(images: images)
+        let pairs = findSimilarPairs(embeddings: embeddings, threshold: 0.97, window: 50)
+        let groups = groupSimilarImages(pairs: pairs)
+        let dupCount = groups.flatMap{$0}.count
+        await MainActor.run {
+            scanResults[cat] = ScanResult(date: Date(), duplicateCount: dupCount, lastGroups: groups)
+        }
+    }
+
+    
+   
+    func loadImagesForCategory(_ cat: PhotoCategory) -> [UIImage] {
+        return loadImagesFromDisk(for: cat)
+    }
+
     
     // ---- 原有照片數量統計保留 ----
     func loadAllCategoryCounts() {
@@ -242,6 +334,30 @@ struct ContentView: View {
             }
         }
     }
+    
+    func loadImages(from assets: [PHAsset]) async -> [UIImage] {
+        await withCheckedContinuation { continuation in
+            var loadedImages: [UIImage] = []
+            let manager = PHImageManager.default()
+            let reqOpts = PHImageRequestOptions()
+            reqOpts.isSynchronous = false
+            reqOpts.deliveryMode = .highQualityFormat
+
+            let group = DispatchGroup()
+            for asset in assets {
+                group.enter()
+                manager.requestImage(for: asset, targetSize: CGSize(width: 224, height: 224),
+                                     contentMode: .aspectFit, options: reqOpts) { img, _ in
+                    if let img = img { loadedImages.append(img) }
+                    group.leave()
+                }
+            }
+            group.notify(queue: .main) {
+                continuation.resume(returning: loadedImages)
+            }
+        }
+    }
+
     
     // ---- 取得該分類資產 ----
     func fetchAssets(for category: PhotoCategory, completion: @escaping ([PHAsset]) -> Void) {
