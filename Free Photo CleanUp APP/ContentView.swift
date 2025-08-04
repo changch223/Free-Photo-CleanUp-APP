@@ -173,155 +173,187 @@ struct ContentView: View {
             .onAppear { Task { await refreshCategoryCounts() } }
         }
     }
-
+    
     // MARK: - Chunk 掃描核心流程
     func startChunkScan(selected: PhotoCategory?) {
-        let categories: [PhotoCategory] = selected == nil ? PhotoCategory.allCases : [selected!]
+        let categories = selected == nil ? PhotoCategory.allCases : [selected!]
         isProcessing = true
-        processingIndex = 0
 
         Task {
-            var allAssetsByCategory: [PhotoCategory: [PHAsset]] = [:]
-            for cat in categories {
-                let assets = await fetchAssetsAsync(for: cat)
-                allAssetsByCategory[cat] = assets
-                await MainActor.run {
-                    processedCounts[cat] = 0
-                }
+            // 先重置每分類進度
+            await MainActor.run {
+                categories.forEach { processedCounts[$0] = 0 }
             }
 
-            let allAssets = allAssetsByCategory.values.flatMap { $0 }
-            let assetDict = Dictionary(uniqueKeysWithValues: allAssets.map { ($0.localIdentifier, $0) })
-            let uniqueAssets = Array(assetDict.values)
-            let totalCount = uniqueAssets.count
-            processingTotal = totalCount
-
-            let chunkSize = 300
-            var prevTailEmbeddings: [[Float]] = []
-            var prevTailAssetIds: [String] = []
-
-            for chunkStart in stride(from: 0, to: totalCount, by: chunkSize) {
-                let chunkEnd = min(chunkStart+chunkSize, totalCount)
-                let chunkAssets = Array(uniqueAssets[chunkStart..<chunkEnd])
-                let chunkAssetIdsNow = chunkAssets.map { $0.localIdentifier }
-                // 1. 分批載入圖片
-                let images = await loadImagesWithProgress(from: chunkAssets)
-                // 2. 分批embedding，限制最多2個同時進行
-                let embeddings = await batchExtractEmbeddingsChunked(images: images, chunkSize: chunkSize)
-
-                // 3. 合併tail (for sliding window)
-                let window = 50
-                let allEmbeddings: [[Float]] = prevTailEmbeddings + embeddings
-                let allAssetIds: [String] = prevTailAssetIds + chunkAssetIdsNow
-
-                // 4. 分批比對
-                var pairs: [(Int, Int)] = []
-                let totalThis = allEmbeddings.count
-                let startIdx = prevTailEmbeddings.count
-
-                for i in startIdx..<totalThis {
-                    let embI = allEmbeddings[i]
-                    let startJ = max(0, i-window)
-                    for j in startJ..<i {
-                        let embJ = allEmbeddings[j]
-                        let sim = cosineSimilarity(embI, embJ)
-                        if sim >= 0.97 {
-                            pairs.append((j, i))
-                        }
+            // 針對每個分類 individually 做 chunk scan
+            for cat in categories {
+                // 1. 拿到該分類所有 asset，去重並按 creationDate 排序
+                let assets = await fetchAssetsAsync(for: cat)
+                var seen = Set<String>()
+                let uniqueAssets = assets
+                    .filter { seen.insert($0.localIdentifier).inserted }
+                    .sorted {
+                        ($0.creationDate ?? Date.distantPast) < ($1.creationDate ?? Date.distantPast)
                     }
-                    await MainActor.run { processingIndex += 1 }
+
+                // 設定這個分類的總數（UI 進度條用）
+                await MainActor.run {
+                    categoryCounts[cat] = uniqueAssets.count
                 }
 
-                // 5. 統計分類結果/更新 cache/進度
-                await MainActor.run {
-                    for cat in categories {
-                        guard let assets = allAssetsByCategory[cat], !assets.isEmpty else { continue }
-                        let catAssetIds = Set(assets.map { $0.localIdentifier })
-                        let chunkProcessed = chunkAssetIdsNow.filter { catAssetIds.contains($0) }.count
-                        let prev = processedCounts[cat] ?? 0
-                        processedCounts[cat] = prev + chunkProcessed
-                        
-                        let catPairs = pairs.filter { catAssetIds.contains(allAssetIds[$0.0]) && catAssetIds.contains(allAssetIds[$0.1]) }
-                        let groups = groupSimilarImages(pairs: catPairs)
-                        let dupCount = groups.flatMap { $0 }.count
-                        let oldRes = scanResults[cat]
-                        let oldGroups = oldRes?.lastGroups ?? []
-                        let oldDup = oldRes?.duplicateCount ?? 0
-                        let assetIds = assets.map { $0.localIdentifier }
+                let windowSize = 50
+                let chunkSize = 300
+                var prevTailEmbs: [[Float]] = []
+                var prevTailIds: [String] = []
+
+                // 準備 globalIds 方便查找 global index
+                let globalIds = uniqueAssets.map { $0.localIdentifier }
+
+                // 2. 分 chunk 處理
+                for chunkStart in stride(from: 0, to: uniqueAssets.count, by: chunkSize) {
+                    let chunkEnd = min(chunkStart + chunkSize, uniqueAssets.count)
+                    let chunkAssets = Array(uniqueAssets[chunkStart..<chunkEnd])
+
+                    // 2.1 載圖 + 過濾
+                    let pairs = await loadImagesWithIds(from: chunkAssets)   // (id, image) 對齊
+                    let chunkIdsFiltered = pairs.map(\.id)
+                    let images = pairs.map(\.image)
+
+                    // 2.2 Embedding
+                    let embs = await batchExtractEmbeddingsChunked(images: images)
+
+                    // 2.3 window 比對
+                    let allEmbs = prevTailEmbs + embs
+                    let allIds  = prevTailIds + chunkIdsFiltered
+                    var pairsIndices: [(Int, Int)] = []
+
+                    for i in prevTailEmbs.count..<allEmbs.count {
+                        for j in max(0, i - windowSize)..<i {
+                            if cosineSimilarity(allEmbs[i], allEmbs[j]) >= 0.97 {
+                                pairsIndices.append((j, i))
+                            }
+                        }
+                    }
+
+                    // 2.4 更新進度 & 分組
+                    await MainActor.run {
+                        // 更新進度
+                        processedCounts[cat, default: 0] += chunkAssets.count
+
+                        // 把 local-index 轉成 global-index
+                        let globalPairs: [(Int, Int)] = pairsIndices.compactMap { pair in
+                            let (localJ, localI) = pair
+                            let idJ = allIds[localJ]
+                            let idI = allIds[localI]
+                            guard
+                                let globalJ = globalIds.firstIndex(of: idJ),
+                                let globalI = globalIds.firstIndex(of: idI)
+                            else { return nil }
+                            return (globalJ, globalI)
+                        }
+
+                        // 分組
+                        let groups = groupSimilarImages(pairs: globalPairs)
+
+                        // 存 ScanResult（同一批 assetIds）
                         scanResults[cat] = ScanResult(
                             date: Date(),
-                            duplicateCount: oldDup + dupCount,
-                            lastGroups: oldGroups + groups,
-                            assetIds: assetIds
+                            duplicateCount: (scanResults[cat]?.duplicateCount ?? 0) + groups.flatMap{$0}.count,
+                            lastGroups:  (scanResults[cat]?.lastGroups  ?? []) + groups,
+                            assetIds:    uniqueAssets.map { $0.localIdentifier }
                         )
+
                         saveScanResultsToLocal()
                     }
-                }
 
-                // 6. 保留chunk尾端window for sliding window
-                if embeddings.count > window {
-                    prevTailEmbeddings = Array(embeddings.suffix(window))
-                    prevTailAssetIds = Array(chunkAssetIdsNow.suffix(window))
-                } else {
-                    prevTailEmbeddings = embeddings
-                    prevTailAssetIds = chunkAssetIdsNow
-                }
-            }
-            isProcessing = false
-        }
-    }
-
-    // -- 只保留與你的embedding函數相容
-    func batchExtractEmbeddingsChunked(images: [UIImage], chunkSize: Int = 300) async -> [[Float]] {
-        var allEmbeddings: [[Float]] = []
-        let semaphore = DispatchSemaphore(value: 2)  // 控制最多2 pipeline
-        let total = images.count
-
-        for chunkStart in stride(from: 0, to: total, by: chunkSize) {
-            let chunk = Array(images[chunkStart..<min(chunkStart+chunkSize, total)])
-            for img in chunk {
-                await withCheckedContinuation { continuation in
-                    DispatchQueue.global().async {
-                        semaphore.wait()
-                        Task {
-                            if let emb = await extractEmbedding(from: img) {
-                                allEmbeddings.append(emb)
-                            }
-                            await MainActor.run { self.processingIndex += 1 }
-                            semaphore.signal()
-                            continuation.resume()
-                        }
+                    // 2.5 保留本 chunk 的尾端 windowSize 張給下一 chunk
+                    if embs.count > windowSize {
+                        prevTailEmbs = Array(embs.suffix(windowSize))
+                        prevTailIds  = Array(chunkIdsFiltered.suffix(windowSize))
+                    } else {
+                        prevTailEmbs = embs
+                        prevTailIds  = chunkIdsFiltered
                     }
                 }
-                try? await Task.sleep(nanoseconds: 1_000_000) // 1ms
             }
+
+            // 全部跑完
+            await MainActor.run { isProcessing = false }
+        }
+    }
+    
+    
+    // -- 只保留與你的embedding函數相容
+    // 2) 順序正確、thread-safe 的 embedding 產生
+    func batchExtractEmbeddingsChunked(
+        images: [UIImage],
+        chunkSize: Int = 300,
+        maxConcurrent: Int = 2
+    ) async -> [[Float]] {
+
+        var allEmbeddings = Array(repeating: [Float](), count: images.count)
+
+        for base in stride(from: 0, to: images.count, by: chunkSize) {
+            let upper = min(base + chunkSize, images.count)
+            var next = base
+            while next < upper {
+                let batchEnd = min(next + maxConcurrent, upper)
+                await withTaskGroup(of: (Int, [Float]?).self) { group in
+                    for idx in next..<batchEnd {
+                        let img = images[idx]
+                        group.addTask {
+                            let emb = await extractEmbedding(from: img)
+                            return (idx, emb)
+                        }
+                    }
+                    for await (idx, emb) in group {
+                        if let emb = emb { allEmbeddings[idx] = emb }
+                        await MainActor.run { self.processingIndex += 1 }
+                    }
+                }
+                next = batchEnd
+            }
+            autoreleasepool { }
         }
         return allEmbeddings
     }
+    
+    // 新的載圖 function：回傳成功的 (id, image)
+    func loadImagesWithIds(from assets: [PHAsset]) async -> [(id: String, image: UIImage)] {
+        let manager = PHImageManager.default()
+        let req = PHImageRequestOptions()
+        req.isSynchronous = false
+        req.deliveryMode = .highQualityFormat
 
-    func loadImagesWithProgress(from assets: [PHAsset]) async -> [UIImage] {
-        await withCheckedContinuation { continuation in
-            var loadedImages: [UIImage] = []
-            let manager = PHImageManager.default()
-            let reqOpts = PHImageRequestOptions()
-            reqOpts.isSynchronous = false
-            reqOpts.deliveryMode = .highQualityFormat
-
-            let group = DispatchGroup()
-            for asset in assets {
-                group.enter()
-                manager.requestImage(for: asset, targetSize: CGSize(width: 224, height: 224),
-                                     contentMode: .aspectFit, options: reqOpts) { img, _ in
-                    if let img = img { loadedImages.append(img) }
-                    DispatchQueue.main.async { self.processingIndex += 1 }
-                    group.leave()
+        var pairs = Array<(String, UIImage?)>(repeating: ("", nil), count: assets.count)
+        await withTaskGroup(of: Void.self) { group in
+            for (idx, asset) in assets.enumerated() {
+                let id = asset.localIdentifier
+                group.addTask {
+                    await withCheckedContinuation { cont in
+                        manager.requestImage(
+                            for: asset,
+                            targetSize: CGSize(width: 224, height: 224),
+                            contentMode: .aspectFit,
+                            options: req
+                        ) { img, _ in
+                            pairs[idx] = (id, img)
+                            DispatchQueue.main.async { self.processingIndex += 1 }
+                            cont.resume()
+                        }
+                    }
                 }
             }
-            group.notify(queue: .main) {
-                continuation.resume(returning: loadedImages)
-            }
+            await group.waitForAll()
+        }
+        // 過濾掉沒拿到圖的項目
+        return pairs.compactMap { (id, img) in
+            guard let img else { return nil }
+            return (id, img)
         }
     }
+
+    
 
     func fetchAssetsAsync(for category: PhotoCategory) async -> [PHAsset] {
         await withCheckedContinuation { continuation in
@@ -409,19 +441,23 @@ struct ContentView: View {
     }
     func loadImagesForCategory(_ cat: PhotoCategory) -> [UIImage] {
         guard let res = scanResults[cat] else { return [] }
-        let assetIds = res.assetIds
-        let assets = PHAsset.fetchAssets(withLocalIdentifiers: assetIds, options: nil)
-        var images: [UIImage] = []
         let manager = PHImageManager.default()
-        let reqOpts = PHImageRequestOptions()
-        reqOpts.isSynchronous = true
-        reqOpts.deliveryMode = .highQualityFormat
-        assets.enumerateObjects { asset, _, _ in
-            manager.requestImage(for: asset, targetSize: CGSize(width: 224, height: 224), contentMode: .aspectFit, options: reqOpts) { img, _ in
-                if let img = img { images.append(img) }
-            }
+        let req = PHImageRequestOptions()
+        req.isSynchronous = true
+        req.deliveryMode  = .highQualityFormat
+
+        var out: [UIImage] = []
+        for id in res.assetIds {
+            let fr = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil)
+            guard let asset = fr.firstObject else { continue }
+            var image: UIImage?
+            manager.requestImage(for: asset,
+                                 targetSize: CGSize(width: 224, height: 224),
+                                 contentMode: .aspectFit,
+                                 options: req) { img, _ in image = img }
+            if let image { out.append(image) }
         }
-        return images
+        return out
     }
 
 }
