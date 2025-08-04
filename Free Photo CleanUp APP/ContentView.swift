@@ -111,16 +111,23 @@ struct ContentView: View {
                     Button(action: {
                         startScanMultiple(selected: Array(selectedCategories))
                     }) {
-                        Text("掃描所選分類")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(selectedCategories.isEmpty ? Color(.systemGray3) : Color.orange)
-                            .foregroundColor(.white)
-                            .cornerRadius(12)
+                        HStack {
+                            Text("掃描所選分類")
+                            if isProcessing {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(0.8)
+                                    .padding(.leading, 4)
+                            }
+                        }
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(selectedCategories.isEmpty || isProcessing ? Color(.systemGray3) : Color.orange)
+                        .foregroundColor(.white)
+                        .cornerRadius(12)
                     }
-                    .disabled(selectedCategories.isEmpty)
-
+                    .disabled(selectedCategories.isEmpty || isProcessing)
                     .padding(.horizontal)
                     .padding(.bottom, 10)
                     
