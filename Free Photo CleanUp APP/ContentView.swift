@@ -10,7 +10,7 @@ enum PhotoCategory: String, CaseIterable, Identifiable, Codable {
     case photo = "照片"
     case selfie = "自拍"
     case portrait = "人像"
-    case screenshot = "銀幕截圖"
+    case screenshot = "螢幕截圖"
     var id: String { rawValue }
 }
 
@@ -79,34 +79,32 @@ struct ContentView: View {
                         Text("選擇要掃描的分類（可多選）")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
-                            ForEach(PhotoCategory.allCases, id: \.self) { cat in
-                                Button(action: {
-                                    if selectedCategories.contains(cat) {
-                                        selectedCategories.remove(cat)
-                                    } else {
-                                        selectedCategories.insert(cat)
-                                    }
-                                }) {
-                                    VStack(spacing: 2) {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 14) {
+                                ForEach(PhotoCategory.allCases, id: \.self) { cat in
+                                    Button(action: {
+                                        if selectedCategories.contains(cat) {
+                                            selectedCategories.remove(cat)
+                                        } else {
+                                            selectedCategories.insert(cat)
+                                        }
+                                    }) {
                                         Text(cat.rawValue)
                                             .fontWeight(.semibold)
-                                            .padding(.horizontal, 14)
-                                            .padding(.vertical, 8)
+                                            .padding(.horizontal, 18)
+                                            .padding(.vertical, 12)
                                             .background(selectedCategories.contains(cat) ? Color.orange : Color(.systemGray5))
                                             .foregroundColor(selectedCategories.contains(cat) ? .white : .primary)
-                                            .cornerRadius(20)
-                                        let scanned = processedCounts[cat] ?? 0
-                                        let total = categoryCounts[cat] ?? 0
-                                        Text("已掃描 \(scanned) / \(total) 張")
-                                        ProgressView(value: Double(scanned), total: Double(max(total, 1)))
+                                            .cornerRadius(24)
                                     }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
+
                             }
+                            .padding(.horizontal)
                         }
+                        .padding(.bottom, 8)
                     }
-                    .padding(.horizontal)
                     
                     Button(action: {
                         startScanMultiple(selected: Array(selectedCategories))
@@ -178,7 +176,11 @@ struct ContentView: View {
                 }
             }
             .background(Color(.systemGroupedBackground))
-            .onAppear { Task { await refreshCategoryCounts() } }
+            .onAppear {
+                loadScanResultsFromLocal()
+                Task { await refreshCategoryCounts() }
+            }
+
         }
     }
     
@@ -435,9 +437,9 @@ struct ContentView: View {
                         let groups = groupSimilarImages(pairs: globalPairs)
                         scanResults[cat] = ScanResult(
                             date: Date(),
-                            duplicateCount: (scanResults[cat]?.duplicateCount ?? 0) + groups.flatMap{$0}.count,
-                            lastGroups:  (scanResults[cat]?.lastGroups  ?? []) + groups,
-                            assetIds:    uniqueAssets.map { $0.localIdentifier }
+                            duplicateCount: groups.flatMap{$0}.count,
+                            lastGroups: groups,
+                            assetIds: uniqueAssets.map { $0.localIdentifier }
                         )
 
                         saveScanResultsToLocal()
@@ -454,6 +456,12 @@ struct ContentView: View {
             }
 
             await MainActor.run { isProcessing = false }
+        }
+    }
+    func loadScanResultsFromLocal() {
+        if let data = UserDefaults.standard.data(forKey: scanResultsKey),
+           let results = try? JSONDecoder().decode([PhotoCategory: ScanResult].self, from: data) {
+            scanResults = results
         }
     }
 
