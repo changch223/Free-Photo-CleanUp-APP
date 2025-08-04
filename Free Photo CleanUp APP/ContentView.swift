@@ -18,6 +18,7 @@ struct ScanResult: Codable {
     var date: Date
     var duplicateCount: Int
     var lastGroups: [[Int]]
+    var assetIds: [String] // 新增！掃描時的asset順序
 }
 
 struct ContentView: View {
@@ -45,19 +46,32 @@ struct ContentView: View {
                         .font(.subheadline)
                         .foregroundColor(.gray)
                         .padding(.bottom, 16)
-                    Button(action: { startChunkScan(selected: nil) }) {
+                    Button(action: {
+                        // Haptic
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        // 執行掃描
+                        startChunkScan(selected: nil)
+                    }) {
                         HStack {
                             Image(systemName: "magnifyingglass")
                             Text("一鍵掃描全部照片重複")
+                            // 執行中才顯示轉圈圈
+                            if isProcessing {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(0.8)
+                                    .padding(.leading, 4)
+                            }
                         }
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(Color.blue)
+                        .background(isProcessing ? Color.gray : Color.blue)
                         .foregroundColor(.white)
                         .cornerRadius(18)
                         .shadow(radius: 3)
                     }
+                    .disabled(isProcessing)
                     .padding(.horizontal)
                     .padding(.bottom, 6)
                     
@@ -233,10 +247,12 @@ struct ContentView: View {
                         let oldRes = scanResults[cat]
                         let oldGroups = oldRes?.lastGroups ?? []
                         let oldDup = oldRes?.duplicateCount ?? 0
+                        let assetIds = assets.map { $0.localIdentifier }
                         scanResults[cat] = ScanResult(
                             date: Date(),
                             duplicateCount: oldDup + dupCount,
-                            lastGroups: oldGroups + groups
+                            lastGroups: oldGroups + groups,
+                            assetIds: assetIds
                         )
                         saveScanResultsToLocal()
                     }
@@ -392,8 +408,22 @@ struct ContentView: View {
 
     }
     func loadImagesForCategory(_ cat: PhotoCategory) -> [UIImage] {
-        return loadImagesFromDisk(for: cat)
+        guard let res = scanResults[cat] else { return [] }
+        let assetIds = res.assetIds
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: assetIds, options: nil)
+        var images: [UIImage] = []
+        let manager = PHImageManager.default()
+        let reqOpts = PHImageRequestOptions()
+        reqOpts.isSynchronous = true
+        reqOpts.deliveryMode = .highQualityFormat
+        assets.enumerateObjects { asset, _, _ in
+            manager.requestImage(for: asset, targetSize: CGSize(width: 224, height: 224), contentMode: .aspectFit, options: reqOpts) { img, _ in
+                if let img = img { images.append(img) }
+            }
+        }
+        return images
     }
+
 }
 
 
