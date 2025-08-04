@@ -14,6 +14,12 @@ struct PersistedScanSummary: Codable {
     var duplicateGroupsByAssetIDs: [[String]]? // 可選：若太大，也可不存，點查看時再載
 }
 
+struct OverLimitAlert: Identifiable {
+    let id = UUID()
+    let message: String
+}
+
+
 struct ResultRowView: View, Equatable {
     let category: PhotoCategory
     let total: Int
@@ -121,11 +127,11 @@ struct ScanResult: Codable {
 extension ContentView {
     // 頁首：主題icon + 標題
     var headerView: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 1) {
             Image(systemName: "photo.on.rectangle.angled")
                 .font(.system(size: 50))
                 .foregroundColor(.blue)
-                .padding(.top, 30)
+                
             Text("智慧照片清理")
                 .font(.largeTitle).bold()
                 .foregroundColor(.primary)
@@ -154,31 +160,25 @@ extension ContentView {
                     // 勾選框
                     Button {
                         if !isProcessing {
-                            var newSelection = selectedCategories
-                            if newSelection.contains(category) {
-                                newSelection.remove(category)
-                            } else {
-                                newSelection.insert(category)
-                            }
-                            // 計算總合是否超過 1000
-                            let total = newSelection.reduce(0) { acc, cat in
-                                chunkCount(for: cat, idx: selectedChunkIndex(for: cat)) + acc
-                            }
-                            if total > 1000 {
-                                overLimitMessage = "已選總數 \(total) 張，超過 1000 上限。請減少分類或組合。"
-                                showOverLimitAlert = true
-                            } else {
-                                selectedCategories = newSelection
-                            }
+                            tryToggle(category)
                         }
-                    } label: {
+                    }  label: {
                         Image(systemName: selectedCategories.contains(category) ? "checkmark.square.fill" : "square")
                             .font(.title3)
                             .foregroundColor(selectedCategories.contains(category) ? .blue : .secondary)
                     }
                     .buttonStyle(.plain)
                     .disabled(isProcessing)
-
+                    .alert(item: $overLimitAlert) { alert in
+                        Alert(
+                            title: Text("超過限制"),
+                            message: Text(alert.message),
+                            dismissButton: .default(Text("確定")) {
+                                overLimitAlert = nil
+                            }
+                        )
+                    }
+                    
                     // 分類名稱 + 該組張數
                     VStack(alignment: .leading, spacing: 2) {
                         Text(category.rawValue)
@@ -201,8 +201,9 @@ extension ContentView {
                                             chunkCount(for: cat, idx: selectedCategoryChunks[cat] ?? 0) + acc
                                         }
                                         if total > 1000 {
-                                            overLimitMessage = "已選總數 \(total) 張，超過 1000 上限。請減少分類或組合。"
-                                            showOverLimitAlert = true
+                                            
+                                            overLimitAlert = OverLimitAlert(message: "已選總數 \(total) 張，超過 1000 上限。請減少分類或組合。")
+
                                             // 自動取消這個分類
                                             selectedCategories.remove(category)
                                         }
@@ -229,13 +230,7 @@ extension ContentView {
             }
         }
         .padding(.top, 10)
-        .alert(isPresented: $showOverLimitAlert) {
-            Alert(title: Text("超過限制"), message: Text(overLimitMessage), dismissButton: .default(Text("確定")))
-        }
     }
-
-
-
 
 
     
@@ -317,6 +312,14 @@ extension ContentView {
     }
 }
 
+extension View {
+    func card() -> some View {
+        self.padding(12)
+            .background(Color.white)
+            .cornerRadius(14)
+            .shadow(color: Color(.black).opacity(0.07), radius: 4, x: 0, y: 2)
+    }
+}
 
 struct ContentView: View {
     // 狀態
@@ -331,16 +334,14 @@ struct ContentView: View {
     @State private var countsLoading = true   // 是否仍在計算各分類總數
     @StateObject private var photoVM = PhotoLibraryViewModel()
     @State private var selectedCategories: Set<PhotoCategory> = []
-   
-    // MARK: - Selection states & alerts
-    @State private var showOverLimitAlert = false
-    @State private var overLimitMessage = ""
 
     // 你已有：分類→分組（每組<=1000）
     @State private var categoryAssetChunks: [PhotoCategory: [[PHAsset]]] = [:]
     // 你已有：分類→目前選到第幾組（>1000 時才有意義）
     @State private var selectedCategoryChunks: [PhotoCategory: Int] = [:]
 
+    @State private var overLimitAlert: OverLimitAlert? = nil
+    
     // MARK: - Helper: 背景同步載圖，保證只回呼一次
     func requestImageSync(_ asset: PHAsset,
                           target: CGSize,
@@ -393,25 +394,23 @@ struct ContentView: View {
         selection.reduce(0) { $0 + countForCategoryInSelection($1) }
     }
 
-    /// 嘗試切換某分類的勾選（包含規則與警告）
     private func tryToggle(_ category: PhotoCategory) {
         // 取消勾選
         if selectedCategories.contains(category) {
             selectedCategories.remove(category)
             return
         }
-        // 要勾選
+
         let targetIsOver = isOverLimitCategory(category)
 
         // 若目標分類超過 1000：只能單選（自動清掉其他）
         if targetIsOver {
-            // 若已經選了別的分類，提示並不切換（或自動改為只選這個；這裡採提示較清楚）
             if !selectedCategories.isEmpty {
-                overLimitMessage = "\(category.rawValue) 共有 \(totalCount(for: category)) 張，已超過 1000，**只能單選**。請先取消其它分類後再選擇。"
-                showOverLimitAlert = true
+                // 這裡需要算 total
+                let total = totalCount(for: category)
+                overLimitAlert = OverLimitAlert(message: "已選總數 \(total) 張，超過 1000 上限。請減少分類或組合。")
                 return
             }
-            // 設定目前組（若還沒設過）
             if selectedCategoryChunks[category] == nil { selectedCategoryChunks[category] = 0 }
             selectedCategories = [category]
             return
@@ -419,8 +418,8 @@ struct ContentView: View {
 
         // 目標 ≤ 1000：可多選，但若目前已有「超過1000的分類」就不行
         if let over = selectedCategories.first(where: { isOverLimitCategory($0) }) {
-            overLimitMessage = "\(over.rawValue) 超過 1000 張，已限制單選。請先取消 \(over.rawValue) 後才能多選其他分類。"
-            showOverLimitAlert = true
+            let total = totalCount(for: over)
+            overLimitAlert = OverLimitAlert(message: "\(over.rawValue) 超過 1000 張，已限制單選。請先取消 \(over.rawValue) 後才能多選其他分類。\n目前選擇總數 \(total) 張。")
             return
         }
 
@@ -429,12 +428,13 @@ struct ContentView: View {
         newSel.insert(category)
         let total = totalCountOfSelection(newSel)
         if total > 1000 {
-            overLimitMessage = "你選了 \(total) 張，超過 1000 上限。請減少分類或改成只選一個大分類的其中一組。"
-            showOverLimitAlert = true
-            return
+            print("超過1000，設置alert：")
+            overLimitAlert = OverLimitAlert(message: "已選總數 \(total) 張，超過 1000 上限。請減少分類或組合。")
+        } else {
+            selectedCategories = newSel
         }
-        selectedCategories = newSel
     }
+
 
     /// 當 >1000 類別更換組別：強制改成只選該類別
     private func didChangeChunk(for category: PhotoCategory, to newIndex: Int) {
@@ -450,26 +450,43 @@ struct ContentView: View {
     let scanResultsKey = "ScanResults"
     
     var body: some View {
-           NavigationView {
-               VStack(spacing: 0) {
-                   headerView
-                   categorySelectionView
-                   actionButtonsView
-                   globalProgressView
-                   scanResultsView
-                   Spacer()
-               }
-               .padding(.top, 4)
-               .padding(.horizontal)
-               .background(Color(.systemGray6))
-               .navigationBarHidden(true)
-               .alert(isPresented: $showFinishAlert) {
-                   Alert(
-                       title: Text("掃描完成"),
-                       message: Text("共找到 \(totalDuplicatesFound) 張重複照片"),
-                       dismissButton: .default(Text("確定"))
-                   )
-               }
+        NavigationView {
+                ZStack {
+                    // 主要內容 ScrollView，可捲動不跑版
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(spacing: 16) {
+                            headerView
+                                .padding(.top, 10)
+                                .card()
+                            categorySelectionView
+                                .card()
+                            globalProgressView
+                            scanResultsView
+                                .card()
+                            Spacer(minLength: 100) // 預留底部空間避免被按鈕遮住
+                        }
+                        .padding(.horizontal, 8)
+                    }
+                    // 底部主要操作按鈕固定，不被內容或鍵盤推擠
+                    .safeAreaInset(edge: .bottom) {
+                        actionButtonsView
+                            .padding(.bottom, 10)
+                            .background(.ultraThinMaterial)
+                    }
+                }
+                .background(Color(.systemGray6))
+                .navigationBarHidden(true)
+                // 所有alert全部掛在根視圖
+                .alert(item: $overLimitAlert) { alert in
+                    Alert(title: Text("超過限制"), message: Text(alert.message), dismissButton: .default(Text("確定")))
+                }
+                .alert(isPresented: $showFinishAlert) {
+                    Alert(
+                        title: Text("掃描完成"),
+                        message: Text("共找到 \(totalDuplicatesFound) 張重複照片"),
+                        dismissButton: .default(Text("確定"))
+                    )
+                }
                .onAppear {
                    Task {
                        // 1) 載入 summary（極快）
