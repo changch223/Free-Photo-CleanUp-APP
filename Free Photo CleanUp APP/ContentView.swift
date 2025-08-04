@@ -20,7 +20,7 @@ struct ResultRowView: View, Equatable {
     let processed: Int
     let countsLoading: Bool
     let result: ScanResult?
-    let similarPairs: [(Int, Int)]
+    //let similarPairs: [(Int, Int)]
 
     static func == (lhs: ResultRowView, rhs: ResultRowView) -> Bool {
         // 只比對這些即可
@@ -65,9 +65,9 @@ struct ResultRowView: View, Equatable {
                     .foregroundColor(.red)
                     .font(.system(size: 14))
                 NavigationLink("查看") {
-                    SimilarImagesView(
-                        similarPairs: similarPairs,
-                        assetIds: result.assetIds
+                    SimilarImagesEntryView(
+                        category: category,
+                        inlineResult: result // 傳進去當後備資料
                     )
                 }
                 .font(.callout)
@@ -309,7 +309,7 @@ extension ContentView {
                     processed: processedCounts[category] ?? 0,
                     countsLoading: photoVM.countsLoading,
                     result: result,
-                    similarPairs: pairs
+                    //similarPairs: pairs
                 )
             }
         }
@@ -472,20 +472,25 @@ struct ContentView: View {
                }
                .onAppear {
                    Task {
-                       let summaries = await loadScanSummariesFromDisk()
-                       // 把輕量資料轉成畫面用的狀態（只需要 duplicateCount 即可）
-                       for (raw, s) in summaries {
-                           if let cat = PhotoCategory(rawValue: raw) {
-                               self.scanResults[cat] = ScanResult(
-                                date: s.date,
-                                duplicateCount: s.duplicateCount,
-                                lastGroups: [],          // 不在啟動時帶回
-                                assetIds: []             // 不在啟動時帶回
-                               )
+                       // 1) 載入 summary（極快）
+                       if let s = loadSummary() {
+                           for (raw, cs) in s.categories {
+                               if let cat = PhotoCategory(rawValue: raw) {
+                                   // 只先放 duplicateCount 到 UI，lastGroups/assetIds 先不載
+                                   self.scanResults[cat] = ScanResult(
+                                    date: cs.date,
+                                    duplicateCount: cs.duplicateCount,
+                                    lastGroups: [],      // 查看時才讀 detail
+                                    assetIds: []         // 查看時才讀 detail
+                                   )
+                                   // 顯示總數（可選）
+                                   self.photoVM.categoryCounts[cat] = cs.totalAssetsAtScan
+                               }
                            }
                        }
                        
-                       // 載入分組
+                       
+                       // 2) 載入分組（現場資產）供選取顯示數量/分
                        for cat in PhotoCategory.allCases {
                            let assets = await fetchAssetsAsync(for: cat)
                            let chunks = splitAssetsByThousand(assets)       // 你已有的切組方法
@@ -585,6 +590,23 @@ struct ContentView: View {
             fetchAssets(for: category) { assets in
                 continuation.resume(returning: assets)
             }
+        }
+    }
+    
+    func currentSignature(for category: PhotoCategory) async -> LibrarySignature {
+        let assets = await fetchAssetsAsync(for: category) // 你已有
+        return makeSignature(for: assets)
+    }
+
+    // 在「查看」將要開啟時呼叫
+    func loadDetailIfAvailable(for category: PhotoCategory) async -> (assetIds: [String], groups: [[Int]])? {
+        guard let detail = loadDetail(for: category) else { return nil }
+        let nowSig = await currentSignature(for: category)
+        if nowSig == detail.librarySignature {
+            return (detail.assetIds, detail.lastGroups)
+        } else {
+            // TODO: 視情況做增量，或先回傳舊資料 + 顯示「資料可能已過期」小標；或直接 nil
+            return (detail.assetIds, detail.lastGroups) // 先回傳舊資料，並在 UI 顯示「可能已過期」
         }
     }
 
@@ -755,6 +777,29 @@ struct ContentView: View {
                     // <--- 這次的重複張數，加進 sessionDuplicatesFound
                     sessionDuplicatesFound += allGroups.flatMap{$0}.count
                 }
+                
+                // 在 startScanMultiple 的每個分類完成後：
+                let signature = makeSignature(for: uniqueAssets)
+
+                let detail = ScanDetailV2(
+                    category: cat.rawValue,
+                    date: Date(),
+                    assetIds: allAssetIds,
+                    lastGroups: allGroups,
+                    librarySignature: signature
+                )
+                saveDetail(detail, for: cat)
+
+                // 更新 summary（先讀舊的，修改一個分類，再存回）
+                var existing = loadSummary() ?? PersistedScanSummaryV2(categories: [:])
+                existing.categories[cat.rawValue] = .init(
+                    date: Date(),
+                    duplicateCount: allGroups.flatMap{$0}.count,
+                    totalAssetsAtScan: uniqueAssets.count,
+                    librarySignature: signature
+                )
+                saveSummary(existing)
+
             }
 
             await MainActor.run {
@@ -857,6 +902,65 @@ func splitAssetsByThousand(_ assets: [PHAsset]) -> [[PHAsset]] {
     return result
 }
 
+
+
+final class PhotoLibraryWatcher: NSObject, PHPhotoLibraryChangeObserver, ObservableObject {
+    @Published var bump: Int = 0 // 讓 SwiftUI 刷一刷
+
+    override init() {
+        super.init()
+        PHPhotoLibrary.shared().register(self)
+    }
+    deinit { PHPhotoLibrary.shared().unregisterChangeObserver(self) }
+
+    func photoLibraryDidChange(_ changeInstance: PHChange) {
+        DispatchQueue.main.async { [weak self] in
+            self?.bump &+= 1
+        }
+    }
+}
+
+// 假設你在 SimilarImagesView 有類別資訊 category
+func applyLocalDeletionToCache(category: PhotoCategory, deletedIDs: [String]) {
+    guard var detail = loadDetail(for: category) else { return }
+    // 從 assetIds 裡刪除
+    let toDelete = Set(deletedIDs)
+    var newIndexMap: [Int: Int] = [:]
+    var newAssetIds: [String] = []
+    for (i, id) in detail.assetIds.enumerated() {
+        if !toDelete.contains(id) {
+            newIndexMap[i] = newAssetIds.count
+            newAssetIds.append(id)
+        }
+    }
+    // 轉換 lastGroups 的索引；無效或只剩一張的群組可移除
+    var newGroups: [[Int]] = []
+    for g in detail.lastGroups {
+        let mapped = g.compactMap { newIndexMap[$0] }
+        if mapped.count >= 2 { newGroups.append(mapped) }
+    }
+    detail.assetIds   = newAssetIds
+    detail.lastGroups = newGroups
+    // 更新 signature（可只更新 assetCount/first/last）
+    detail.librarySignature = LibrarySignature(
+        assetCount: newAssetIds.count,
+        firstID: newAssetIds.first,
+        lastID: newAssetIds.last
+    )
+    saveDetail(detail, for: category)
+
+    // 若你有 summary，也同步扣掉數字
+    if var s = loadSummary() {
+        if var cs = s.categories[category.rawValue] {
+            // 這裡簡化：duplicateCount 重新用 newGroups 計算
+            cs.duplicateCount = newGroups.flatMap{$0}.count
+            cs.totalAssetsAtScan = newAssetIds.count
+            cs.librarySignature = detail.librarySignature
+            s.categories[category.rawValue] = cs
+            saveSummary(s)
+        }
+    }
+}
 
 
 #Preview {

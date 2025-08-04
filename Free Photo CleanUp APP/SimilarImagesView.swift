@@ -8,6 +8,85 @@
 import SwiftUI
 import Photos
 
+/// 進入「查看」時的啟動器：先讀磁碟 detail，再轉去 SimilarImagesView
+struct SimilarImagesEntryView: View {
+    let category: PhotoCategory
+    let inlineResult: ScanResult?
+
+    @State private var isLoading = true
+    @State private var assetIds: [String] = []
+    @State private var pairs: [(Int, Int)] = []
+    @State private var warningStale = false  // 可選：若 signature 不同可提示資料可能過期
+
+    var body: some View {
+        Group {
+            if isLoading {
+                VStack(spacing: 12) {
+                    ProgressView("讀取掃描結果…")
+                    if warningStale {
+                        Text("資料可能已過期，稍後會自動更新。")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            } else if !assetIds.isEmpty {
+                SimilarImagesView(similarPairs: pairs, assetIds: assetIds)
+                    .overlay(alignment: .topTrailing) {
+                        if warningStale {
+                            Text("資料可能已過期")
+                                .font(.caption2).bold()
+                                .padding(6)
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(8)
+                                .padding(8)
+                        }
+                    }
+            } else {
+                VStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.largeTitle)
+                        .foregroundColor(.orange)
+                    Text("找不到此分類的掃描詳情")
+                        .font(.headline)
+                    Text("請先執行一次掃描，或稍後再試。")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.top, 40)
+            }
+        }
+        .navigationTitle("\(category.rawValue) 查看")
+        .task { await loadDetailOrFallback() }
+    }
+
+    /// 讀 detail 檔；若無則退回 inline 結果
+    private func loadDetailOrFallback() async {
+        // 先嘗試讀取磁碟
+        if let detail = loadDetail(for: category) {
+            // （可選）對比現在簽章，若不同可標示 warning
+            // 若你要快速檢查，可在此呼叫 currentSignature(for:)
+            // let nowSig = await currentSignature(for: category)
+            // warningStale = (nowSig != detail.librarySignature)
+
+            assetIds = detail.assetIds
+            pairs = pairsFromGroups(detail.lastGroups)
+            isLoading = false
+            return
+        }
+
+        // 退回 inline（當次掃描還在記憶體中的資料）
+        if let inline = inlineResult, !inline.assetIds.isEmpty {
+            assetIds = inline.assetIds
+            pairs = pairsFromGroups(inline.lastGroups)
+        } else {
+            assetIds = []
+            pairs = []
+        }
+        isLoading = false
+    }
+}
+
+
 struct SimilarImagesView: View {
     let similarPairs: [(Int, Int)]
     let assetIds: [String]
