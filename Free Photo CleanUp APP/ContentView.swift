@@ -6,6 +6,14 @@
 import SwiftUI
 import Photos
 
+enum ActiveAlert: Identifiable {
+    case overLimit(String)
+    case finished(Int)
+    var id: String {
+        switch self { case .overLimit: return "overLimit"; case .finished: return "finished" }
+    }
+}
+
 struct PersistedScanSummary: Codable {
     var date: Date
     var duplicateCount: Int
@@ -169,15 +177,7 @@ extension ContentView {
                     }
                     .buttonStyle(.plain)
                     .disabled(isProcessing)
-                    .alert(item: $overLimitAlert) { alert in
-                        Alert(
-                            title: Text("超過限制"),
-                            message: Text(alert.message),
-                            dismissButton: .default(Text("確定")) {
-                                overLimitAlert = nil
-                            }
-                        )
-                    }
+                    
                     
                     // 分類名稱 + 該組張數
                     VStack(alignment: .leading, spacing: 2) {
@@ -202,7 +202,7 @@ extension ContentView {
                                         }
                                         if total > 1000 {
                                             
-                                            overLimitAlert = OverLimitAlert(message: "已選總數 \(total) 張，超過 1000 上限。請減少分類或組合。")
+                                            activeAlert = .overLimit( "已選總數超過 1000 上限。請減少分類或組合。")
 
                                             // 自動取消這個分類
                                             selectedCategories.remove(category)
@@ -341,6 +341,7 @@ struct ContentView: View {
     @State private var selectedCategoryChunks: [PhotoCategory: Int] = [:]
 
     @State private var overLimitAlert: OverLimitAlert? = nil
+    @State private var activeAlert: ActiveAlert?
     
     // MARK: - Helper: 背景同步載圖，保證只回呼一次
     func requestImageSync(_ asset: PHAsset,
@@ -408,7 +409,7 @@ struct ContentView: View {
             if !selectedCategories.isEmpty {
                 // 這裡需要算 total
                 let total = totalCount(for: category)
-                overLimitAlert = OverLimitAlert(message: "已選總數 \(total) 張，超過 1000 上限。請減少分類或組合。")
+                activeAlert = .overLimit("已選總數超過 1000 上限。請減少分類或組合。")
                 return
             }
             if selectedCategoryChunks[category] == nil { selectedCategoryChunks[category] = 0 }
@@ -419,7 +420,7 @@ struct ContentView: View {
         // 目標 ≤ 1000：可多選，但若目前已有「超過1000的分類」就不行
         if let over = selectedCategories.first(where: { isOverLimitCategory($0) }) {
             let total = totalCount(for: over)
-            overLimitAlert = OverLimitAlert(message: "\(over.rawValue) 超過 1000 張，已限制單選。請先取消 \(over.rawValue) 後才能多選其他分類。\n目前選擇總數 \(total) 張。")
+            activeAlert = .overLimit("已選總數超過 1000 上限。請減少分類或組合。")
             return
         }
 
@@ -429,7 +430,7 @@ struct ContentView: View {
         let total = totalCountOfSelection(newSel)
         if total > 1000 {
             print("超過1000，設置alert：")
-            overLimitAlert = OverLimitAlert(message: "已選總數 \(total) 張，超過 1000 上限。請減少分類或組合。")
+            activeAlert = .overLimit("已選總數超過 1000 上限。請減少分類或組合")
         } else {
             selectedCategories = newSel
         }
@@ -477,15 +478,13 @@ struct ContentView: View {
                 .background(Color(.systemGray6))
                 .navigationBarHidden(true)
                 // 所有alert全部掛在根視圖
-                .alert(item: $overLimitAlert) { alert in
-                    Alert(title: Text("超過限制"), message: Text(alert.message), dismissButton: .default(Text("確定")))
-                }
-                .alert(isPresented: $showFinishAlert) {
-                    Alert(
-                        title: Text("掃描完成"),
-                        message: Text("共找到 \(totalDuplicatesFound) 張重複照片"),
-                        dismissButton: .default(Text("確定"))
-                    )
+                .alert(item: $activeAlert) { a in
+                    switch a {
+                    case .overLimit(let msg):
+                        return Alert(title: Text("超過限制"), message: Text(msg), dismissButton: .default(Text("確定")))
+                    case .finished(let n):
+                        return Alert(title: Text("掃描完成"), message: Text("共找到 \(n) 張重複照片"), dismissButton: .default(Text("確定")))
+                    }
                 }
                .onAppear {
                    Task {
@@ -823,7 +822,7 @@ struct ContentView: View {
                 isProcessing = false
                 // totalDuplicatesFound = scanResults.values.map { $0.duplicateCount }.reduce(0, +) // 舊
                 totalDuplicatesFound = sessionDuplicatesFound // <--- 新：只顯示這次掃描到的
-                showFinishAlert = true
+                activeAlert = .finished(sessionDuplicatesFound)
             }
         }
     }
