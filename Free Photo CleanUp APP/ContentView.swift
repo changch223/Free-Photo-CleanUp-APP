@@ -517,24 +517,24 @@ struct ContentView: View {
             }
 
             for cat in selected {
-                // 以下流程都和 startChunkScan 裡每個 cat 的內容一樣
                 let assets = await fetchAssetsAsync(for: cat)
                 var seen = Set<String>()
                 let uniqueAssets = assets
                     .filter { seen.insert($0.localIdentifier).inserted }
-                    .sorted {
-                        ($0.creationDate ?? Date.distantPast) < ($1.creationDate ?? Date.distantPast)
-                    }
+                    .sorted { ($0.creationDate ?? Date.distantPast) < ($1.creationDate ?? Date.distantPast) }
 
                 await MainActor.run {
                     photoVM.categoryCounts[cat] = uniqueAssets.count
                 }
 
                 let windowSize = 50
-                let chunkSize = 300
+                let chunkSize = 250
                 var prevTailEmbs: [[Float]] = []
                 var prevTailIds: [String] = []
                 let globalIds = uniqueAssets.map { $0.localIdentifier }
+
+                var allGroups: [[Int]] = []
+                var allAssetIds: [String] = []
 
                 for chunkStart in stride(from: 0, to: uniqueAssets.count, by: chunkSize) {
                     let chunkEnd = min(chunkStart + chunkSize, uniqueAssets.count)
@@ -557,31 +557,33 @@ struct ContentView: View {
                         }
                     }
 
+                    // 只要一份 globalPairs + groups
+                    let globalPairs: [(Int, Int)] = pairsIndices.compactMap { pair in
+                        let (localJ, localI) = pair
+                        let idJ = allIds[localJ]
+                        let idI = allIds[localI]
+                        guard
+                            let globalJ = globalIds.firstIndex(of: idJ),
+                            let globalI = globalIds.firstIndex(of: idI)
+                        else { return nil }
+                        return (globalJ, globalI)
+                    }
+                    let groups = groupSimilarImages(pairs: globalPairs)
+                    allGroups += groups
+                    allAssetIds += chunkIdsFiltered
+
+                    // --- 重點：每個 chunk 結束就即時刷新 ---
                     await MainActor.run {
-                        processedCounts[cat, default: 0] += chunkAssets.count
-
-                        let globalPairs: [(Int, Int)] = pairsIndices.compactMap { pair in
-                            let (localJ, localI) = pair
-                            let idJ = allIds[localJ]
-                            let idI = allIds[localI]
-                            guard
-                                let globalJ = globalIds.firstIndex(of: idJ),
-                                let globalI = globalIds.firstIndex(of: idI)
-                            else { return nil }
-                            return (globalJ, globalI)
-                        }
-
-                        let groups = groupSimilarImages(pairs: globalPairs)
                         scanResults[cat] = ScanResult(
                             date: Date(),
-                            duplicateCount: groups.flatMap{$0}.count,
-                            lastGroups: groups,
-                            assetIds: uniqueAssets.map { $0.localIdentifier }
+                            duplicateCount: allGroups.flatMap{$0}.count,
+                            lastGroups: allGroups,
+                            assetIds: allAssetIds
                         )
-
-                        saveScanResultsToLocal()
+                        processedCounts[cat, default: 0] += chunkAssets.count
                     }
 
+                    // 尾部保留
                     if embs.count > windowSize {
                         prevTailEmbs = Array(embs.suffix(windowSize))
                         prevTailIds  = Array(chunkIdsFiltered.suffix(windowSize))
@@ -589,6 +591,17 @@ struct ContentView: View {
                         prevTailEmbs = embs
                         prevTailIds  = chunkIdsFiltered
                     }
+                }
+
+                // 結束時存到本地
+                await MainActor.run {
+                    scanResults[cat] = ScanResult(
+                        date: Date(),
+                        duplicateCount: allGroups.flatMap{$0}.count,
+                        lastGroups: allGroups,
+                        assetIds: allAssetIds
+                    )
+                    saveScanResultsToLocal()
                 }
             }
 
@@ -598,9 +611,10 @@ struct ContentView: View {
                 totalDuplicatesFound = scanResults.values.map { $0.duplicateCount }.reduce(0, +)
                 showFinishAlert = true
             }
-
         }
     }
+
+    
     func loadScanResultsFromLocal() {
         if let data = UserDefaults.standard.data(forKey: scanResultsKey),
            let results = try? JSONDecoder().decode([PhotoCategory: ScanResult].self, from: data) {
