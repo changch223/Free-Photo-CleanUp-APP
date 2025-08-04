@@ -109,7 +109,7 @@ struct ContentView: View {
                     .padding(.horizontal)
                     
                     Button(action: {
-                        //startScanMultiple(selected: Array(selectedCategories))
+                        startScanMultiple(selected: Array(selectedCategories))
                     }) {
                         Text("掃描所選分類")
                             .font(.headline)
@@ -120,6 +120,7 @@ struct ContentView: View {
                             .cornerRadius(12)
                     }
                     .disabled(selectedCategories.isEmpty)
+
                     .padding(.horizontal)
                     .padding(.bottom, 10)
                     
@@ -177,110 +178,9 @@ struct ContentView: View {
     // MARK: - Chunk 掃描核心流程
     func startChunkScan(selected: PhotoCategory?) {
         let categories = selected == nil ? PhotoCategory.allCases : [selected!]
-        isProcessing = true
-
-        Task {
-            // 先重置每分類進度
-            await MainActor.run {
-                categories.forEach { processedCounts[$0] = 0 }
-            }
-
-            // 針對每個分類 individually 做 chunk scan
-            for cat in categories {
-                // 1. 拿到該分類所有 asset，去重並按 creationDate 排序
-                let assets = await fetchAssetsAsync(for: cat)
-                var seen = Set<String>()
-                let uniqueAssets = assets
-                    .filter { seen.insert($0.localIdentifier).inserted }
-                    .sorted {
-                        ($0.creationDate ?? Date.distantPast) < ($1.creationDate ?? Date.distantPast)
-                    }
-
-                // 設定這個分類的總數（UI 進度條用）
-                await MainActor.run {
-                    categoryCounts[cat] = uniqueAssets.count
-                }
-
-                let windowSize = 50
-                let chunkSize = 300
-                var prevTailEmbs: [[Float]] = []
-                var prevTailIds: [String] = []
-
-                // 準備 globalIds 方便查找 global index
-                let globalIds = uniqueAssets.map { $0.localIdentifier }
-
-                // 2. 分 chunk 處理
-                for chunkStart in stride(from: 0, to: uniqueAssets.count, by: chunkSize) {
-                    let chunkEnd = min(chunkStart + chunkSize, uniqueAssets.count)
-                    let chunkAssets = Array(uniqueAssets[chunkStart..<chunkEnd])
-
-                    // 2.1 載圖 + 過濾
-                    let pairs = await loadImagesWithIds(from: chunkAssets)   // (id, image) 對齊
-                    let chunkIdsFiltered = pairs.map(\.id)
-                    let images = pairs.map(\.image)
-
-                    // 2.2 Embedding
-                    let embs = await batchExtractEmbeddingsChunked(images: images)
-
-                    // 2.3 window 比對
-                    let allEmbs = prevTailEmbs + embs
-                    let allIds  = prevTailIds + chunkIdsFiltered
-                    var pairsIndices: [(Int, Int)] = []
-
-                    for i in prevTailEmbs.count..<allEmbs.count {
-                        for j in max(0, i - windowSize)..<i {
-                            if cosineSimilarity(allEmbs[i], allEmbs[j]) >= 0.97 {
-                                pairsIndices.append((j, i))
-                            }
-                        }
-                    }
-
-                    // 2.4 更新進度 & 分組
-                    await MainActor.run {
-                        // 更新進度
-                        processedCounts[cat, default: 0] += chunkAssets.count
-
-                        // 把 local-index 轉成 global-index
-                        let globalPairs: [(Int, Int)] = pairsIndices.compactMap { pair in
-                            let (localJ, localI) = pair
-                            let idJ = allIds[localJ]
-                            let idI = allIds[localI]
-                            guard
-                                let globalJ = globalIds.firstIndex(of: idJ),
-                                let globalI = globalIds.firstIndex(of: idI)
-                            else { return nil }
-                            return (globalJ, globalI)
-                        }
-
-                        // 分組
-                        let groups = groupSimilarImages(pairs: globalPairs)
-
-                        // 存 ScanResult（同一批 assetIds）
-                        scanResults[cat] = ScanResult(
-                            date: Date(),
-                            duplicateCount: (scanResults[cat]?.duplicateCount ?? 0) + groups.flatMap{$0}.count,
-                            lastGroups:  (scanResults[cat]?.lastGroups  ?? []) + groups,
-                            assetIds:    uniqueAssets.map { $0.localIdentifier }
-                        )
-
-                        saveScanResultsToLocal()
-                    }
-
-                    // 2.5 保留本 chunk 的尾端 windowSize 張給下一 chunk
-                    if embs.count > windowSize {
-                        prevTailEmbs = Array(embs.suffix(windowSize))
-                        prevTailIds  = Array(chunkIdsFiltered.suffix(windowSize))
-                    } else {
-                        prevTailEmbs = embs
-                        prevTailIds  = chunkIdsFiltered
-                    }
-                }
-            }
-
-            // 全部跑完
-            await MainActor.run { isProcessing = false }
-        }
+        startScanMultiple(selected: categories)
     }
+
     
     
     // -- 只保留與你的embedding函數相容
@@ -459,6 +359,97 @@ struct ContentView: View {
         }
         return out
     }
+    
+    func startScanMultiple(selected: [PhotoCategory]) {
+        guard !selected.isEmpty else { return }
+        isProcessing = true
+
+        Task {
+            // 重置所選分類進度
+            await MainActor.run {
+                selected.forEach { processedCounts[$0] = 0 }
+            }
+
+            for cat in selected {
+                // 以下流程都和 startChunkScan 裡每個 cat 的內容一樣
+                let assets = await fetchAssetsAsync(for: cat)
+                var seen = Set<String>()
+                let uniqueAssets = assets
+                    .filter { seen.insert($0.localIdentifier).inserted }
+                    .sorted {
+                        ($0.creationDate ?? Date.distantPast) < ($1.creationDate ?? Date.distantPast)
+                    }
+
+                await MainActor.run {
+                    categoryCounts[cat] = uniqueAssets.count
+                }
+
+                let windowSize = 50
+                let chunkSize = 300
+                var prevTailEmbs: [[Float]] = []
+                var prevTailIds: [String] = []
+                let globalIds = uniqueAssets.map { $0.localIdentifier }
+
+                for chunkStart in stride(from: 0, to: uniqueAssets.count, by: chunkSize) {
+                    let chunkEnd = min(chunkStart + chunkSize, uniqueAssets.count)
+                    let chunkAssets = Array(uniqueAssets[chunkStart..<chunkEnd])
+
+                    let pairs = await loadImagesWithIds(from: chunkAssets)
+                    let chunkIdsFiltered = pairs.map(\.id)
+                    let images = pairs.map(\.image)
+
+                    let embs = await batchExtractEmbeddingsChunked(images: images)
+                    let allEmbs = prevTailEmbs + embs
+                    let allIds  = prevTailIds + chunkIdsFiltered
+                    var pairsIndices: [(Int, Int)] = []
+
+                    for i in prevTailEmbs.count..<allEmbs.count {
+                        for j in max(0, i - windowSize)..<i {
+                            if cosineSimilarity(allEmbs[i], allEmbs[j]) >= 0.97 {
+                                pairsIndices.append((j, i))
+                            }
+                        }
+                    }
+
+                    await MainActor.run {
+                        processedCounts[cat, default: 0] += chunkAssets.count
+
+                        let globalPairs: [(Int, Int)] = pairsIndices.compactMap { pair in
+                            let (localJ, localI) = pair
+                            let idJ = allIds[localJ]
+                            let idI = allIds[localI]
+                            guard
+                                let globalJ = globalIds.firstIndex(of: idJ),
+                                let globalI = globalIds.firstIndex(of: idI)
+                            else { return nil }
+                            return (globalJ, globalI)
+                        }
+
+                        let groups = groupSimilarImages(pairs: globalPairs)
+                        scanResults[cat] = ScanResult(
+                            date: Date(),
+                            duplicateCount: (scanResults[cat]?.duplicateCount ?? 0) + groups.flatMap{$0}.count,
+                            lastGroups:  (scanResults[cat]?.lastGroups  ?? []) + groups,
+                            assetIds:    uniqueAssets.map { $0.localIdentifier }
+                        )
+
+                        saveScanResultsToLocal()
+                    }
+
+                    if embs.count > windowSize {
+                        prevTailEmbs = Array(embs.suffix(windowSize))
+                        prevTailIds  = Array(chunkIdsFiltered.suffix(windowSize))
+                    } else {
+                        prevTailEmbs = embs
+                        prevTailIds  = chunkIdsFiltered
+                    }
+                }
+            }
+
+            await MainActor.run { isProcessing = false }
+        }
+    }
+
 
 }
 
