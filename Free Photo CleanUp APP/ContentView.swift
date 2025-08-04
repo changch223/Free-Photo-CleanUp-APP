@@ -659,6 +659,8 @@ struct ContentView: View {
                 selected.forEach { processedCounts[$0] = 0 }
             }
 
+            var sessionDuplicatesFound = 0 // <--- 新增：本次找到的總重複數
+            
             for cat in selected {
                 // 決定要掃描哪一組 chunk
                 let chunks = categoryAssetChunks[cat] ?? []
@@ -750,12 +752,15 @@ struct ContentView: View {
                         assetIds: allAssetIds
                     )
                     saveScanResultsToLocal()
+                    // <--- 這次的重複張數，加進 sessionDuplicatesFound
+                    sessionDuplicatesFound += allGroups.flatMap{$0}.count
                 }
             }
 
             await MainActor.run {
                 isProcessing = false
-                totalDuplicatesFound = scanResults.values.map { $0.duplicateCount }.reduce(0, +)
+                // totalDuplicatesFound = scanResults.values.map { $0.duplicateCount }.reduce(0, +) // 舊
+                totalDuplicatesFound = sessionDuplicatesFound // <--- 新：只顯示這次掃描到的
                 showFinishAlert = true
             }
         }
