@@ -61,8 +61,8 @@ struct ResultRowView: View {
                 NavigationLink("查看") {
                     LazyView {
                         SimilarImagesView(
-                            similarPairs: similarPairs,
-                            images: images
+                            similarPairs: pairsFromGroups(result.lastGroups),
+                            assetIds: result.assetIds
                         )
                     }
                 }
@@ -136,77 +136,111 @@ extension ContentView {
     
     // 分類選擇
     var categorySelectionView: some View {
-        VStack(alignment: .leading, spacing: 15) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("選擇掃描類別")
                 .font(.headline)
-                .foregroundColor(.primary)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 16) {
-                    ForEach(PhotoCategory.allCases, id: \.self) { category in
-                        Button(action: {
-                            if !isProcessing { // 掃描中不允許點選
-                                if selectedCategories.contains(category) {
-                                    selectedCategories.remove(category)
-                                } else {
-                                    selectedCategories.insert(category)
-                                }
+            Text("最多只能選擇1000張照片")
+                .font(.subheadline)
+            ForEach(PhotoCategory.allCases, id: \.self) { category in
+                let chunks = categoryAssetChunks[category] ?? []
+                let chunkCountAll = chunks.count
+                let selectedIdx = selectedChunkIndex(for: category)
+                let displayCount = chunkCount(for: category, idx: selectedIdx)
+
+                HStack(spacing: 10) {
+                    // 勾選框
+                    Button {
+                        if !isProcessing {
+                            var newSelection = selectedCategories
+                            if newSelection.contains(category) {
+                                newSelection.remove(category)
+                            } else {
+                                newSelection.insert(category)
                             }
-                        }) {
-                            HStack(spacing: 6) {
-                                Text(category.rawValue)
-                                    .fontWeight(.semibold)
-                                // 加上進度圈圈
-                                if isProcessing {
-                                    ProgressView()
-                                        .scaleEffect(0.7)
-                                }
+                            // 計算總合是否超過 1000
+                            let total = newSelection.reduce(0) { acc, cat in
+                                chunkCount(for: cat, idx: selectedChunkIndex(for: cat)) + acc
                             }
-                            .padding(.vertical, 10)
-                            .padding(.horizontal, 20)
-                            .background(selectedCategories.contains(category) ? Color.blue : Color(.systemGray5))
-                            .foregroundColor(selectedCategories.contains(category) ? .white : .primary)
-                            .font(.system(size: 18, weight: .semibold))
-                            .shadow(color: selectedCategories.contains(category) ? .blue.opacity(0.15) : .clear, radius: 3, x: 0, y: 2)
-                            .cornerRadius(24)
-                            .opacity(isProcessing ? 0.6 : 1) // 掃描時半透明
+                            if total > 1000 {
+                                overLimitMessage = "已選總數 \(total) 張，超過 1000 上限。請減少分類或組合。"
+                                showOverLimitAlert = true
+                            } else {
+                                selectedCategories = newSelection
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .disabled(isProcessing) // 掃描時 disable
-                        
+                    } label: {
+                        Image(systemName: selectedCategories.contains(category) ? "checkmark.square.fill" : "square")
+                            .font(.title3)
+                            .foregroundColor(selectedCategories.contains(category) ? .blue : .secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isProcessing)
+
+                    // 分類名稱 + 該組張數
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(category.rawValue)
+                            .font(.system(size: 16, weight: .semibold))
+                        Text("第 \(selectedIdx + 1) 組 · \(displayCount) 張")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+
+                    // 分組下拉（有多組才顯示）
+                    if chunkCountAll > 1 {
+                        Menu {
+                            ForEach(0..<chunkCountAll, id: \.self) { i in
+                                Button {
+                                    selectedCategoryChunks[category] = i
+                                    // 如果已勾選，改變組時也要重新檢查合計數
+                                    if selectedCategories.contains(category) {
+                                        let total = selectedCategories.reduce(0) { acc, cat in
+                                            chunkCount(for: cat, idx: selectedCategoryChunks[cat] ?? 0) + acc
+                                        }
+                                        if total > 1000 {
+                                            overLimitMessage = "已選總數 \(total) 張，超過 1000 上限。請減少分類或組合。"
+                                            showOverLimitAlert = true
+                                            // 自動取消這個分類
+                                            selectedCategories.remove(category)
+                                        }
+                                    }
+                                } label: {
+                                    Text("第 \(i+1) 組（\(chunks[i].count) 張）")
+                                }
+                            }
+                        } label: {
+                            HStack() {
+                                Text("第 \(selectedIdx + 1) 組")
+                                Image(systemName: "chevron.down")
+                            }
+                            .padding(.horizontal, 10)
+                            .background(Color(.systemGray6))
+                            .cornerRadius(8)
+                        }
+                        .disabled(isProcessing)
                     }
                 }
-                .padding(.horizontal, 2)
+                .background(Color(.systemGray6))
+                .cornerRadius(12)
+                .opacity(isProcessing ? 0.6 : 1)
             }
         }
         .padding(.top, 10)
+        .alert(isPresented: $showOverLimitAlert) {
+            Alert(title: Text("超過限制"), message: Text(overLimitMessage), dismissButton: .default(Text("確定")))
+        }
     }
+
+
+
+
+
     
     // 按鈕
     var actionButtonsView: some View {
         VStack(spacing: 15) {
-            Button(action: {
-                startChunkScan(selected: nil)
-            }) {
-                HStack {
-                    Image(systemName: "sparkles")
-                    Text("一鍵掃描全部")
-                    if isProcessing {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle())
-                            .scaleEffect(1.0)
-                            .padding(.leading, 6)
-                    }
-                }
-                .foregroundColor(.white)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(isProcessing ? Color.gray : Color.green)
-                .cornerRadius(16)
-                .shadow(radius: 7, y: 3)
-            }
-            .disabled(isProcessing)
-            // ...同下略...
             
+    
             
             Button(action: {
                 startScanMultiple(selected: Array(selectedCategories))
@@ -234,14 +268,19 @@ extension ContentView {
     }
     
     var globalProgressView: some View {
-        let totalProcessed = processedCounts.values.reduce(0, +)
-        let totalCount = photoVM.categoryCounts.values.reduce(0, +)
+        // 每個選取分類取目前所選 chunk 的數量
+        let selectedTotal = selectedCategories.reduce(0) { acc, cat in
+            let idx = selectedCategoryChunks[cat] ?? 0
+            let count = categoryAssetChunks[cat]?[safe: idx]?.count ?? 0
+            return acc + count
+        }
+        let selectedProcessed = selectedCategories.reduce(0) { $0 + (processedCounts[$1] ?? 0) }
         return Group {
-            if isProcessing && totalCount > 0 {
+            if isProcessing && selectedTotal > 0 {
                 VStack(spacing: 4) {
-                    ProgressView(value: Double(totalProcessed), total: Double(max(totalCount, 1)))
+                    ProgressView(value: Double(selectedProcessed), total: Double(max(selectedTotal, 1)))
                         .accentColor(.blue)
-                    Text("總進度 \(totalProcessed) / \(totalCount) 張")
+                    Text("總進度 \(selectedProcessed) / \(selectedTotal) 張")
                         .font(.footnote)
                         .foregroundColor(.secondary)
                 }
@@ -250,6 +289,7 @@ extension ContentView {
             }
         }
     }
+
     
     // 掃描結果
     var scanResultsView: some View {
@@ -282,7 +322,6 @@ struct ContentView: View {
     @State private var categoryCounts: [PhotoCategory: Int] = [:]  // 總數
     @State private var processedCounts: [PhotoCategory: Int] = [:] // 已掃描數
     @State private var scanResults: [PhotoCategory: ScanResult] = [:]
-    @State private var selectedCategories: Set<PhotoCategory> = []
     @State private var isProcessing = false
     @State private var processingIndex = 0
     @State private var processingTotal = 0
@@ -290,6 +329,99 @@ struct ContentView: View {
     @State private var totalDuplicatesFound = 0
     @State private var countsLoading = true   // 是否仍在計算各分類總數
     @StateObject private var photoVM = PhotoLibraryViewModel()
+    @State private var selectedCategories: Set<PhotoCategory> = []
+   
+    // MARK: - Selection states & alerts
+    @State private var showOverLimitAlert = false
+    @State private var overLimitMessage = ""
+
+    // 你已有：分類→分組（每組<=1000）
+    @State private var categoryAssetChunks: [PhotoCategory: [[PHAsset]]] = [:]
+    // 你已有：分類→目前選到第幾組（>1000 時才有意義）
+    @State private var selectedCategoryChunks: [PhotoCategory: Int] = [:]
+
+    // MARK: - Helpers
+    private func isOverLimitCategory(_ category: PhotoCategory) -> Bool {
+        (categoryAssetChunks[category]?.count ?? 0) > 1
+    }
+
+    private func selectedChunkIndex(for category: PhotoCategory) -> Int {
+        selectedCategoryChunks[category] ?? 0
+    }
+
+    private func chunkCount(for category: PhotoCategory, idx: Int) -> Int {
+        categoryAssetChunks[category]?[safe: idx]?.count ?? 0
+    }
+
+    private func totalCount(for category: PhotoCategory) -> Int {
+        (categoryAssetChunks[category]?.flatMap { $0 }.count) ?? 0
+    }
+
+    /// 回傳「此分類在目前選擇下」會掃描的張數
+    private func countForCategoryInSelection(_ category: PhotoCategory) -> Int {
+        if isOverLimitCategory(category) {
+            return chunkCount(for: category, idx: selectedChunkIndex(for: category))
+        } else {
+            return totalCount(for: category)
+        }
+    }
+
+    /// 計算一組選擇的合計張數（多選時用）
+    private func totalCountOfSelection(_ selection: Set<PhotoCategory>) -> Int {
+        selection.reduce(0) { $0 + countForCategoryInSelection($1) }
+    }
+
+    /// 嘗試切換某分類的勾選（包含規則與警告）
+    private func tryToggle(_ category: PhotoCategory) {
+        // 取消勾選
+        if selectedCategories.contains(category) {
+            selectedCategories.remove(category)
+            return
+        }
+        // 要勾選
+        let targetIsOver = isOverLimitCategory(category)
+
+        // 若目標分類超過 1000：只能單選（自動清掉其他）
+        if targetIsOver {
+            // 若已經選了別的分類，提示並不切換（或自動改為只選這個；這裡採提示較清楚）
+            if !selectedCategories.isEmpty {
+                overLimitMessage = "\(category.rawValue) 共有 \(totalCount(for: category)) 張，已超過 1000，**只能單選**。請先取消其它分類後再選擇。"
+                showOverLimitAlert = true
+                return
+            }
+            // 設定目前組（若還沒設過）
+            if selectedCategoryChunks[category] == nil { selectedCategoryChunks[category] = 0 }
+            selectedCategories = [category]
+            return
+        }
+
+        // 目標 ≤ 1000：可多選，但若目前已有「超過1000的分類」就不行
+        if let over = selectedCategories.first(where: { isOverLimitCategory($0) }) {
+            overLimitMessage = "\(over.rawValue) 超過 1000 張，已限制單選。請先取消 \(over.rawValue) 後才能多選其他分類。"
+            showOverLimitAlert = true
+            return
+        }
+
+        // 檢查總合是否超過 1000
+        var newSel = selectedCategories
+        newSel.insert(category)
+        let total = totalCountOfSelection(newSel)
+        if total > 1000 {
+            overLimitMessage = "你選了 \(total) 張，超過 1000 上限。請減少分類或改成只選一個大分類的其中一組。"
+            showOverLimitAlert = true
+            return
+        }
+        selectedCategories = newSel
+    }
+
+    /// 當 >1000 類別更換組別：強制改成只選該類別
+    private func didChangeChunk(for category: PhotoCategory, to newIndex: Int) {
+        selectedCategoryChunks[category] = newIndex
+        // 規則：>1000 必須單選
+        selectedCategories = [category]
+    }
+
+
 
     
     // --- 本地快取 key
@@ -330,11 +462,30 @@ struct ContentView: View {
                                )
                            }
                        }
+                       
+                       // 載入分組
+                       for cat in PhotoCategory.allCases {
+                           let assets = await fetchAssetsAsync(for: cat)
+                           let chunks = splitAssetsByThousand(assets)       // 你已有的切組方法
+                           categoryAssetChunks[cat] = chunks
+                           if chunks.count > 1 {
+                               selectedCategoryChunks[cat] = 0             // 預設第一組
+                           }
+                       }
+
+                     
                    }
                }
            }
     }
 
+    func totalSelectedAssetsCount() -> Int {
+        selectedCategories.reduce(0) { acc, cat in
+            let chunks = categoryAssetChunks[cat] ?? []
+            let idx = (chunks.count > 1) ? (selectedCategoryChunks[cat] ?? 0) : 0
+            return acc + (chunks[safe: idx]?.count ?? 0)
+        }
+    }
     
     // MARK: - Chunk 掃描核心流程
     func startChunkScan(selected: PhotoCategory?) {
@@ -441,9 +592,6 @@ struct ContentView: View {
         }
     }
 
-   
-
-
 
     func saveScanResultsToLocal() {
         if let data = try? JSONEncoder().encode(scanResults) {
@@ -511,15 +659,19 @@ struct ContentView: View {
         isProcessing = true
 
         Task {
-            // 重置所選分類進度
             await MainActor.run {
                 selected.forEach { processedCounts[$0] = 0 }
             }
 
             for cat in selected {
-                let assets = await fetchAssetsAsync(for: cat)
+                // 決定要掃描哪一組 chunk
+                let chunks = categoryAssetChunks[cat] ?? []
+                let chunkIdx = (chunks.count > 1) ? (selectedCategoryChunks[cat] ?? 0) : 0
+                let chunkAssets = chunks[safe: chunkIdx] ?? []
+                if chunkAssets.isEmpty { continue }
+
                 var seen = Set<String>()
-                let uniqueAssets = assets
+                let uniqueAssets = chunkAssets
                     .filter { seen.insert($0.localIdentifier).inserted }
                     .sorted { ($0.creationDate ?? Date.distantPast) < ($1.creationDate ?? Date.distantPast) }
 
@@ -538,9 +690,9 @@ struct ContentView: View {
 
                 for chunkStart in stride(from: 0, to: uniqueAssets.count, by: chunkSize) {
                     let chunkEnd = min(chunkStart + chunkSize, uniqueAssets.count)
-                    let chunkAssets = Array(uniqueAssets[chunkStart..<chunkEnd])
+                    let chunkSubAssets = Array(uniqueAssets[chunkStart..<chunkEnd])
 
-                    let pairs = await loadImagesWithIds(from: chunkAssets)
+                    let pairs = await loadImagesWithIds(from: chunkSubAssets)
                     let chunkIdsFiltered = pairs.map(\.id)
                     let images = pairs.map(\.image)
 
@@ -572,7 +724,7 @@ struct ContentView: View {
                     allGroups += groups
                     allAssetIds += chunkIdsFiltered
 
-                    // --- 重點：每個 chunk 結束就即時刷新 ---
+                    // --- 每個 chunk 即時刷新 ---
                     await MainActor.run {
                         scanResults[cat] = ScanResult(
                             date: Date(),
@@ -580,7 +732,7 @@ struct ContentView: View {
                             lastGroups: allGroups,
                             assetIds: allAssetIds
                         )
-                        processedCounts[cat, default: 0] += chunkAssets.count
+                        processedCounts[cat, default: 0] += chunkSubAssets.count
                     }
 
                     // 尾部保留
@@ -607,12 +759,12 @@ struct ContentView: View {
 
             await MainActor.run {
                 isProcessing = false
-                // 統計所有分類重複
                 totalDuplicatesFound = scanResults.values.map { $0.duplicateCount }.reduce(0, +)
                 showFinishAlert = true
             }
         }
     }
+
 
     
     func loadScanResultsFromLocal() {
@@ -691,8 +843,24 @@ func loadImagesForCategory(_ cat: PhotoCategory, scanResults: [PhotoCategory: Sc
     return out
 }
 
+/// 傳回：["Selfie": [[id1, id2, ...], [id1001, id1002, ...]], ...]
+func splitAssetsByThousand(_ assets: [PHAsset]) -> [[PHAsset]] {
+    let chunkSize = 1000
+    var result: [[PHAsset]] = []
+    var i = 0
+    while i < assets.count {
+        let end = min(i + chunkSize, assets.count)
+        result.append(Array(assets[i..<end]))
+        i = end
+    }
+    return result
+}
+
+
+
 #Preview {
     ContentView()
 }
+
 
 

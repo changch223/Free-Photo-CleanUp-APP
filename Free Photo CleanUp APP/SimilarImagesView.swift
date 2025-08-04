@@ -6,17 +6,18 @@
 //
 
 import SwiftUI
+import Photos
 
 struct SimilarImagesView: View {
     let similarPairs: [(Int, Int)]
-    let images: [UIImage]
+    let assetIds: [String]
 
-    @State private var selectedKeep: [Int: Set<Int>] = [:]  // groupIdx: Set<imageIndex>
+    @State private var selectedKeep: [Int: Set<Int>] = [:]
 
+    // 用 pairs group 成 [[Int]]
     var grouped: [[Int]] {
         groupSimilarImages(pairs: similarPairs)
     }
-
     var allKeepIndices: Set<Int> {
         Set(selectedKeep.values.flatMap { $0 })
     }
@@ -30,37 +31,20 @@ struct SimilarImagesView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             ScrollView {
-                VStack(spacing: 18) {
+                LazyVStack(spacing: 18) {
                     ForEach(Array(grouped.enumerated()), id: \.offset) { (groupIdx, group) in
                         VStack(alignment: .leading, spacing: 6) {
                             ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 10) {
+                                LazyHStack(spacing: 10) {
                                     ForEach(group, id: \.self) { idx in
-                                        ZStack(alignment: .topTrailing) {
-                                            if let img = images[safe: idx] {
-                                                Image(uiImage: img)
-                                                    .resizable()
-                                                    .scaledToFill()
-                                                    .frame(width: 80, height: 80)
-                                                    .clipped()
-                                                    .cornerRadius(12)
-                                                    .shadow(radius: 2)
-                                                    .overlay(
-                                                        RoundedRectangle(cornerRadius: 12)
-                                                            .stroke(selectedKeep[groupIdx]?.contains(idx) == true ? Color.green : Color.gray.opacity(0.3), lineWidth: 3)
-                                                    )
-                                                    .onTapGesture {
-                                                        if selectedKeep[groupIdx]?.contains(idx) == true {
-                                                            selectedKeep[groupIdx]?.remove(idx)
-                                                        } else {
-                                                            selectedKeep[groupIdx, default: []].insert(idx)
-                                                        }
-                                                    }
-                                            }
+                                        ThumbnailView(
+                                            assetID: assetIds[safe: idx] ?? "",
+                                            isSelected: selectedKeep[groupIdx]?.contains(idx) ?? false
+                                        ) {
                                             if selectedKeep[groupIdx]?.contains(idx) == true {
-                                                Image(systemName: "checkmark.circle.fill")
-                                                    .foregroundColor(.green)
-                                                    .offset(x: -5, y: 5)
+                                                selectedKeep[groupIdx]?.remove(idx)
+                                            } else {
+                                                selectedKeep[groupIdx, default: []].insert(idx)
                                             }
                                         }
                                     }
@@ -77,7 +61,7 @@ struct SimilarImagesView: View {
                 .padding(.top)
                 .padding(.bottom, 60)
             }
-            // 底部固定 bar
+            // 底部操作
             VStack {
                 Divider()
                 HStack {
@@ -85,7 +69,7 @@ struct SimilarImagesView: View {
                         .font(.footnote)
                     Spacer()
                     Button(action: {
-                        print("批次刪除這些 index:", allDeleteIndices)
+                        print("批次刪除 index:", allDeleteIndices)
                     }) {
                         Text("批次刪除")
                             .fontWeight(.bold)
@@ -108,9 +92,7 @@ struct SimilarImagesView: View {
         }
         .navigationTitle("連續相似群組")
         .onAppear {
-            print("SimilarImagesView images.count:", images.count)
-            print("SimilarImagesView similarPairs:", similarPairs)
-            print("SimilarImagesView grouped:", grouped)
+            // 預設每組選保留第一張
             var dict: [Int: Set<Int>] = [:]
             for (i, group) in grouped.enumerated() {
                 if let first = group.first {
@@ -122,11 +104,68 @@ struct SimilarImagesView: View {
     }
 }
 
-// --- 陣列安全取值小助手（避免 index 越界 crash） ---
+// 小圖載入 cell
+struct ThumbnailView: View {
+    let assetID: String
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    @State private var thumb: UIImage?
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if let img = thumb {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Color(.systemGray5) // loading placeholder
+                }
+            }
+            .frame(width: 80, height: 80)
+            .clipped()
+            .cornerRadius(12)
+            .shadow(radius: 2)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isSelected ? Color.green : Color.gray.opacity(0.3), lineWidth: 3)
+            )
+            .onTapGesture(perform: onTap)
+            .onAppear(perform: loadThumbnail)
+
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
+                    .offset(x: -5, y: 5)
+            }
+        }
+    }
+
+    func loadThumbnail() {
+        guard !assetID.isEmpty else { return }
+        let asset = PHAsset.fetchAssets(withLocalIdentifiers: [assetID], options: nil).firstObject
+        guard let asset = asset else { return }
+        let manager = PHCachingImageManager.default()
+        let opts = PHImageRequestOptions()
+        opts.isSynchronous = false
+        opts.deliveryMode = .fastFormat
+
+        manager.requestImage(for: asset,
+                             targetSize: CGSize(width: 80 * UIScreen.main.scale, height: 80 * UIScreen.main.scale),
+                             contentMode: .aspectFill,
+                             options: opts) { img, _ in
+            DispatchQueue.main.async {
+                self.thumb = img
+            }
+        }
+    }
+}
+
+
+// --- 陣列安全取值 ---
 extension Array {
     subscript(safe index: Int) -> Element? {
         (indices.contains(index)) ? self[index] : nil
     }
 }
-
-
