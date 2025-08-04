@@ -6,6 +6,100 @@
 import SwiftUI
 import Photos
 
+struct PersistedScanSummary: Codable {
+    var date: Date
+    var duplicateCount: Int
+    // 如果需要在「查看」頁快速啟動，僅保存「每組重複的 asset local IDs」，
+    // 而不是全量的 assetIds。大幅縮小資料量。
+    var duplicateGroupsByAssetIDs: [[String]]? // 可選：若太大，也可不存，點查看時再載
+}
+
+struct ResultRowView: View {
+    let category: PhotoCategory
+    let total: Int
+    let processed: Int
+    let countsLoading: Bool
+    let result: ScanResult?
+    let similarPairs: [(Int, Int)]      // <--- 新增
+     let images: [UIImage]               // <--- 新增
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(category.rawValue)
+                    .font(.system(size: 16, weight: .semibold))
+                
+                if countsLoading && total == 0 {
+                    HStack(spacing: 6) {
+                        ProgressView().scaleEffect(0.9)
+                        Text("正在取得總數…")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } else {
+                    Text("已掃描 \(processed) / \(total) 張")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    if total > 0 {
+                        ProgressView(value: Double(processed), total: Double(total))
+                            .tint(.blue)
+                            .frame(maxWidth: 140)
+                            .scaleEffect(x: 1, y: 1.15, anchor: .center)
+                            .animation(.easeInOut(duration: 0.4), value: processed)
+                    } else {
+                        ProgressView()
+                            .opacity(0.3)
+                            .frame(maxWidth: 140)
+                    }
+                }
+            }
+            Spacer()
+            if let result, result.duplicateCount > 0 {
+                Text("重複 \(result.duplicateCount) 張")
+                    .foregroundColor(.red)
+                    .font(.system(size: 14))
+                NavigationLink("查看") {
+                    LazyView {
+                        SimilarImagesView(
+                            similarPairs: similarPairs,
+                            images: images
+                        )
+                    }
+                }
+                .font(.callout)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(Color.blue.opacity(0.13))
+                .cornerRadius(10)
+            } else {
+                Text("無重複")
+                    .foregroundColor(.secondary)
+                    .font(.system(size: 14))
+            }
+
+        }
+        .padding(10)
+        .background(Color.white)
+        .cornerRadius(14)
+        .shadow(color: Color(.black).opacity(0.07), radius: 4, x: 0, y: 2)
+        .padding(.horizontal, 4)
+    }
+}
+
+
+struct LazyView<Content: View>: View {
+    let build: () -> Content
+    var body: some View { build() }
+}
+
+typealias PersistedScanSummaries = [PhotoCategory.RawValue: PersistedScanSummary]
+
+func summariesURL() -> URL {
+    let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+    return dir.appendingPathComponent("scan_results_v2.json")
+}
+
+
 enum PhotoCategory: String, CaseIterable, Identifiable, Codable {
     case photo = "照片"
     case selfie = "自拍"
@@ -78,7 +172,7 @@ extension ContentView {
                         }
                         .buttonStyle(.plain)
                         .disabled(isProcessing) // 掃描時 disable
-                                                
+                        
                     }
                 }
                 .padding(.horizontal, 2)
@@ -112,7 +206,7 @@ extension ContentView {
             }
             .disabled(isProcessing)
             // ...同下略...
-
+            
             
             Button(action: {
                 startScanMultiple(selected: Array(selectedCategories))
@@ -156,81 +250,26 @@ extension ContentView {
             }
         }
     }
-
+    
     // 掃描結果
     var scanResultsView: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("掃描結果")
                 .font(.headline)
                 .padding(.leading, 4)
-            
             ForEach(PhotoCategory.allCases, id: \.self) { category in
-                HStack {
-                    // 左側：每個分類自己的進度
-                    let total = photoVM.categoryCounts[category] ?? 0
-                    let processed = processedCounts[category] ?? 0
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(category.rawValue)
-                            .font(.system(size: 16, weight: .semibold))
-                        
-                        if photoVM.countsLoading && total == 0 {
-                            HStack(spacing: 6) {
-                                ProgressView().scaleEffect(0.9)
-                                Text("正在取得總數…")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        } else {
-                            Text("已掃描 \(processed) / \(total) 張")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            
-                            if total > 0 {
-                                ProgressView(value: Double(processed), total: Double(total))
-                                    .tint(.blue) // iOS 15+ 用 .tint；舊版可改回 .accentColor
-                                    .frame(maxWidth: 140)
-                                    .scaleEffect(x: 1, y: 1.15, anchor: .center)
-                                    .animation(.easeInOut(duration: 0.4), value: processed)
-                            } else {
-                                // 沒有照片就顯示一條淡淡的進度條
-                                ProgressView()
-                                    .opacity(0.3)
-                                    .frame(maxWidth: 140)
-                            }
-                        }
-                    }
-                    
-                    Spacer()
-                    
-                    // 右側：結果按鈕/文字
-                    if let result = scanResults[category], result.duplicateCount > 0 {
-                        Text("重複 \(result.duplicateCount) 張")
-                            .foregroundColor(.red)
-                            .font(.system(size: 14))
-                        
-                        NavigationLink("查看") {
-                            SimilarImagesView(
-                                similarPairs: pairsFromGroups(result.lastGroups),
-                                images: loadImagesForCategory(category)
-                            )
-                        }
-                        .font(.callout)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .background(Color.blue.opacity(0.13))
-                        .cornerRadius(10)
-                    } else {
-                        Text("無重複")
-                            .foregroundColor(.secondary)
-                            .font(.system(size: 14))
-                    }
-                }
-                .padding(10)
-                .background(Color.white)
-                .cornerRadius(14)
-                .shadow(color: Color(.black).opacity(0.07), radius: 4, x: 0, y: 2)
-                .padding(.horizontal, 4)
+                let result = scanResults[category]
+                let pairs = result != nil ? pairsFromGroups(result!.lastGroups) : []
+                let images = result != nil ? loadImagesForCategory(category, scanResults: scanResults) : []
+                ResultRowView(
+                    category: category,
+                    total: photoVM.categoryCounts[category] ?? 0,
+                    processed: processedCounts[category] ?? 0,
+                    countsLoading: photoVM.countsLoading,
+                    result: result,
+                    similarPairs: pairs,
+                    images: images
+                )
             }
         }
         .padding(.top)
@@ -278,8 +317,20 @@ struct ContentView: View {
                    )
                }
                .onAppear {
-                   loadScanResultsFromLocal()
-                   // 不需要再呼叫 refreshCategoryCounts()
+                   Task {
+                       let summaries = await loadScanSummariesFromDisk()
+                       // 把輕量資料轉成畫面用的狀態（只需要 duplicateCount 即可）
+                       for (raw, s) in summaries {
+                           if let cat = PhotoCategory(rawValue: raw) {
+                               self.scanResults[cat] = ScanResult(
+                                date: s.date,
+                                duplicateCount: s.duplicateCount,
+                                lastGroups: [],          // 不在啟動時帶回
+                                assetIds: []             // 不在啟動時帶回
+                               )
+                           }
+                       }
+                   }
                }
            }
     }
@@ -390,15 +441,7 @@ struct ContentView: View {
         }
     }
 
-    func pairsFromGroups(_ groups: [[Int]]) -> [(Int, Int)] {
-        var pairs: [(Int, Int)] = []
-        for group in groups {
-            for i in 0..<(group.count - 1) {
-                pairs.append((group[i], group[i+1]))
-            }
-        }
-        return pairs
-    }
+   
 
 
 
@@ -461,26 +504,7 @@ struct ContentView: View {
         
 
     }
-    func loadImagesForCategory(_ cat: PhotoCategory) -> [UIImage] {
-        guard let res = scanResults[cat] else { return [] }
-        let manager = PHImageManager.default()
-        let req = PHImageRequestOptions()
-        req.isSynchronous = true
-        req.deliveryMode  = .highQualityFormat
-
-        var out: [UIImage] = []
-        for id in res.assetIds {
-            let fr = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil)
-            guard let asset = fr.firstObject else { continue }
-            var image: UIImage?
-            manager.requestImage(for: asset,
-                                 targetSize: CGSize(width: 224, height: 224),
-                                 contentMode: .aspectFit,
-                                 options: req) { img, _ in image = img }
-            if let image { out.append(image) }
-        }
-        return out
-    }
+    
     
     func startScanMultiple(selected: [PhotoCategory]) {
         guard !selected.isEmpty else { return }
@@ -583,12 +607,75 @@ struct ContentView: View {
             scanResults = results
         }
     }
+    
+    func saveScanSummariesToDisk(_ summaries: PersistedScanSummaries) {
+        Task.detached(priority: .background) {
+            do {
+                let data = try JSONEncoder().encode(summaries)
+                try data.write(to: summariesURL(), options: .atomic)
+            } catch {
+                print("saveScanSummariesToDisk error:", error)
+            }
+        }
+    }
+    
+    @MainActor
+    func loadScanSummariesFromDisk() async -> PersistedScanSummaries {
+        await withCheckedContinuation { cont in
+            Task.detached(priority: .background) {
+                do {
+                    let url = summariesURL()
+                    guard FileManager.default.fileExists(atPath: url.path) else {
+                        cont.resume(returning: [:])
+                        return
+                    }
+                    let data = try Data(contentsOf: url)
+                    let decoded = try JSONDecoder().decode(PersistedScanSummaries.self, from: data)
+                    cont.resume(returning: decoded)
+                } catch {
+                    print("loadScanSummariesFromDisk error:", error)
+                    cont.resume(returning: [:])
+                }
+            }
+        }
+    }
+
+
 
 
 }
 
+func pairsFromGroups(_ groups: [[Int]]) -> [(Int, Int)] {
+    var pairs: [(Int, Int)] = []
+    for group in groups {
+        for i in 0..<(group.count - 1) {
+            pairs.append((group[i], group[i+1]))
+        }
+    }
+    return pairs
+}
 
 
+func loadImagesForCategory(_ cat: PhotoCategory, scanResults: [PhotoCategory: ScanResult]) -> [UIImage] {
+    guard let res = scanResults[cat] else { return [] }
+    let manager = PHImageManager.default()
+    let req = PHImageRequestOptions()
+    req.isSynchronous = true
+    req.deliveryMode  = .highQualityFormat
+
+    var out: [UIImage] = []
+    for id in res.assetIds {
+        let fr = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil)
+        guard let asset = fr.firstObject else { continue }
+        var image: UIImage?
+        manager.requestImage(for: asset,
+                             targetSize: CGSize(width: 224, height: 224),
+                             contentMode: .aspectFit,
+                             options: req) { img, _ in image = img }
+        if let image { out.append(image) }
+    }
+    return out
+}
 
 #Preview {
     ContentView()
