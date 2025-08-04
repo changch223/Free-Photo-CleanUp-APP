@@ -14,21 +14,27 @@ struct PersistedScanSummary: Codable {
     var duplicateGroupsByAssetIDs: [[String]]? // 可選：若太大，也可不存，點查看時再載
 }
 
-struct ResultRowView: View {
+struct ResultRowView: View, Equatable {
     let category: PhotoCategory
     let total: Int
     let processed: Int
     let countsLoading: Bool
     let result: ScanResult?
-    let similarPairs: [(Int, Int)]      // <--- 新增
-     let images: [UIImage]               // <--- 新增
+    let similarPairs: [(Int, Int)]
+
+    static func == (lhs: ResultRowView, rhs: ResultRowView) -> Bool {
+        // 只比對這些即可
+        lhs.category == rhs.category &&
+        lhs.total == rhs.total &&
+        lhs.processed == rhs.processed &&
+        lhs.result?.duplicateCount == rhs.result?.duplicateCount
+    }
 
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 Text(category.rawValue)
                     .font(.system(size: 16, weight: .semibold))
-                
                 if countsLoading && total == 0 {
                     HStack(spacing: 6) {
                         ProgressView().scaleEffect(0.9)
@@ -59,12 +65,10 @@ struct ResultRowView: View {
                     .foregroundColor(.red)
                     .font(.system(size: 14))
                 NavigationLink("查看") {
-                    LazyView {
-                        SimilarImagesView(
-                            similarPairs: pairsFromGroups(result.lastGroups),
-                            assetIds: result.assetIds
-                        )
-                    }
+                    SimilarImagesView(
+                        similarPairs: similarPairs,
+                        assetIds: result.assetIds
+                    )
                 }
                 .font(.callout)
                 .padding(.horizontal, 14)
@@ -76,7 +80,6 @@ struct ResultRowView: View {
                     .foregroundColor(.secondary)
                     .font(.system(size: 14))
             }
-
         }
         .padding(10)
         .background(Color.white)
@@ -300,15 +303,13 @@ extension ContentView {
             ForEach(PhotoCategory.allCases, id: \.self) { category in
                 let result = scanResults[category]
                 let pairs = result != nil ? pairsFromGroups(result!.lastGroups) : []
-                let images = result != nil ? loadImagesForCategory(category, scanResults: scanResults) : []
                 ResultRowView(
                     category: category,
                     total: photoVM.categoryCounts[category] ?? 0,
                     processed: processedCounts[category] ?? 0,
                     countsLoading: photoVM.countsLoading,
                     result: result,
-                    similarPairs: pairs,
-                    images: images
+                    similarPairs: pairs
                 )
             }
         }
@@ -340,6 +341,27 @@ struct ContentView: View {
     // 你已有：分類→目前選到第幾組（>1000 時才有意義）
     @State private var selectedCategoryChunks: [PhotoCategory: Int] = [:]
 
+    // MARK: - Helper: 背景同步載圖，保證只回呼一次
+    func requestImageSync(_ asset: PHAsset,
+                          target: CGSize,
+                          mode: PHImageContentMode = .aspectFill) -> UIImage? {
+        let opts = PHImageRequestOptions()
+        opts.isSynchronous = true            // 只回呼一次
+        opts.deliveryMode = .fastFormat
+        opts.resizeMode   = .fast
+        opts.isNetworkAccessAllowed = false
+
+        var out: UIImage?
+        PHImageManager.default().requestImage(for: asset,
+                                              targetSize: target,
+                                              contentMode: mode,
+                                              options: opts) { img, _ in
+            out = img
+        }
+        return out
+    }
+
+    
     // MARK: - Helpers
     private func isOverLimitCategory(_ category: PhotoCategory) -> Bool {
         (categoryAssetChunks[category]?.count ?? 0) > 1
@@ -472,8 +494,6 @@ struct ContentView: View {
                                selectedCategoryChunks[cat] = 0             // 預設第一組
                            }
                        }
-
-                     
                    }
                }
            }
@@ -532,18 +552,8 @@ struct ContentView: View {
     
     // 新的載圖 function：回傳成功的 (id, image)
     func loadImagesWithIds(from assets: [PHAsset], maxConcurrent: Int = 8) async -> [(id: String, image: UIImage)] {
-        let manager = PHCachingImageManager.default() // 可重用快取管理
-        let req = PHImageRequestOptions()
-        req.isSynchronous = false
-        req.deliveryMode  = .fastFormat         // 快速、小記憶體
-        req.resizeMode    = .fast
-        req.isNetworkAccessAllowed = false
-
         let target = CGSize(width: 224, height: 224)
-
         var pairs = Array<(String, UIImage?)>(repeating: ("", nil), count: assets.count)
-
-        // 以固定併發度分批
         var i = 0
         while i < assets.count {
             let upper = min(i + maxConcurrent, assets.count)
@@ -552,35 +562,21 @@ struct ContentView: View {
                     let asset = assets[idx]
                     let id = asset.localIdentifier
                     group.addTask {
-                        await withCheckedContinuation { cont in
-                            manager.requestImage(for: asset,
-                                                 targetSize: target,
-                                                 contentMode: .aspectFill, // 小縮圖更快
-                                                 options: req) { img, _ in
-                                pairs[idx] = (id, img)
-                                cont.resume()
-                            }
-                        }
+                        let img = await requestImageSync(asset, target: target, mode: .aspectFill)
+                        pairs[idx] = (id, img)
                     }
                 }
                 await group.waitForAll()
             }
             i = upper
-            autoreleasepool { } // 幫助釋放暫存
+            autoreleasepool { }
         }
-
-        return pairs.compactMap { (id, img) in
-            guard let img else { return nil }
-            return (id, img)
-        }
-    
-
-        // 過濾掉沒拿到圖的項目
         return pairs.compactMap { (id, img) in
             guard let img else { return nil }
             return (id, img)
         }
     }
+
 
     
 

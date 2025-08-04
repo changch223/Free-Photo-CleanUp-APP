@@ -11,6 +11,7 @@ import Photos
 struct SimilarImagesView: View {
     let similarPairs: [(Int, Int)]
     let assetIds: [String]
+    static var imageCache = NSCache<NSString, UIImage>()
 
     @State private var selectedKeep: [Int: Set<Int>] = [:]
 
@@ -144,24 +145,65 @@ struct ThumbnailView: View {
 
     func loadThumbnail() {
         guard !assetID.isEmpty else { return }
-        let asset = PHAsset.fetchAssets(withLocalIdentifiers: [assetID], options: nil).firstObject
-        guard let asset = asset else { return }
-        let manager = PHCachingImageManager.default()
-        let opts = PHImageRequestOptions()
-        opts.isSynchronous = false
-        opts.deliveryMode = .fastFormat
+        let fr = PHAsset.fetchAssets(withLocalIdentifiers: [assetID], options: nil)
+        guard let asset = fr.firstObject else { return }
+        let target = CGSize(width: 80 * UIScreen.main.scale, height: 80 * UIScreen.main.scale)
 
-        manager.requestImage(for: asset,
-                             targetSize: CGSize(width: 80 * UIScreen.main.scale, height: 80 * UIScreen.main.scale),
-                             contentMode: .aspectFill,
-                             options: opts) { img, _ in
-            DispatchQueue.main.async {
+        Task {
+            // 先查 cache
+            if let cached = SimilarImagesView.imageCache.object(forKey: assetID as NSString) {
+                self.thumb = cached
+                return
+            }
+            let img = await requestImageAsyncOnce(asset, target: target, mode: .aspectFill)
+            if let img {
+                SimilarImagesView.imageCache.setObject(img, forKey: assetID as NSString)
                 self.thumb = img
             }
         }
     }
 }
 
+// Async 安全載縮圖 for cell (防多次 resume)
+func requestImageAsyncOnce(_ asset: PHAsset,
+                           target: CGSize,
+                           mode: PHImageContentMode = .aspectFill) async -> UIImage? {
+    let opts = PHImageRequestOptions()
+    opts.isSynchronous = false
+    opts.deliveryMode  = .opportunistic // 可能多次回呼
+    opts.resizeMode    = .fast
+    opts.isNetworkAccessAllowed = false
+
+    return await withCheckedContinuation { cont in
+        var resumed = false
+        let requestID = PHImageManager.default().requestImage(
+            for: asset,
+            targetSize: target,
+            contentMode: mode,
+            options: opts
+        ) { img, info in
+            if (info?[PHImageCancelledKey] as? NSNumber)?.boolValue == true ||
+                (info?[PHImageErrorKey] as? NSError) != nil {
+                if !resumed { resumed = true; cont.resume(returning: nil) }
+                return
+            }
+            let degraded = (info?[PHImageResultIsDegradedKey] as? NSNumber)?.boolValue ?? false
+            if !degraded {
+                if !resumed { resumed = true; cont.resume(returning: img) }
+            }
+        }
+
+        // 當 Task 被取消時也取消請求
+        Task {
+            try? await Task.sleep(nanoseconds: 0)
+            if Task.isCancelled && !resumed {
+                PHImageManager.default().cancelImageRequest(requestID)
+                resumed = true
+                cont.resume(returning: nil)
+            }
+        }
+    }
+}
 
 // --- 陣列安全取值 ---
 extension Array {
