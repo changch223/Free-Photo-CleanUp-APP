@@ -1,0 +1,65 @@
+//
+//  Localizable.strings
+//  Free Photo CleanUp APP
+//
+//  Created by chang chiawei on 2025-08-04.
+//
+
+"category_photo" = "写真";
+"category_selfie" = "自撮り";
+"category_portrait" = "ポートレート";
+"category_screenshot" = "スクリーンショット";
+
+
+
+"app_title" = "スマート写真クリーナー";
+"app_subtitle" = "重複写真を素早くスキャンし削除して、大切なストレージを解放します。";
+"category_select_title" = "スキャンカテゴリを選択";
+"category_limit_hint" = "最大1,000枚まで選択できます";
+"progress_scanned" = "%d / %d 枚をスキャン済み";
+"progress_loading" = "合計を取得中...";
+"result_duplicate" = "重複 %d 枚";
+"result_no_duplicate" = "重複なし";
+"btn_view" = "表示";
+"btn_scan_selected" = "選択カテゴリをスキャン";
+"progress_total" = "総進捗 %d / %d 枚";
+"result_title" = "スキャン結果";
+"alert_over_limit_title" = "上限を超えました";
+"alert_over_limit_msg" = "選択数が1,000枚を超えました。カテゴリやグループを減らしてください。";
+"alert_over_limit_detail" = "選択数: %d 枚、1,000枚の上限を超えました。カテゴリやグループを減らしてください。";
+"alert_finish_title" = "スキャン完了";
+"alert_finish_msg" = "%d 枚の重複写真が見つかりました";
+"ok" = "確認";
+"chunk_title" = "第%dグループ";
+"chunk_title_count" = "第%dグループ・%d枚";
+"chunk_menu" = "第%dグループ（%d枚）";
+
+"loading_scan_result" = "スキャン結果を読み込み中…";
+"stale_data_warning" = "データが古い可能性があります。まもなく自動更新されます。";
+"not_found_detail_title" = "このカテゴリのスキャン詳細が見つかりません";
+"not_found_detail_msg" = "まずスキャンを実行するか、しばらくしてからもう一度お試しください。";
+"nav_title_view_category" = "%@を表示";
+
+"select_keep" = "保存済み：%d / %d";
+"btn_advanced_filter" = "詳細フィルター";
+"batch_action_summary" = "%d枚を保存、%d枚を削除予定";
+"btn_batch_delete" = "一括削除";
+"btn_deleting" = "削除中…";
+"confirm_delete_title" = "削除の確認";
+"confirm_delete_msg" = "%d枚の写真を削除してもよろしいですか？削除後は「最近削除した項目」に移動されます。";
+"delete_failed_title" = "削除失敗";
+"delete_failed_msg" = "%@";
+"ok" = "OK";
+"nav_title_similar_group" = "連続類似グループ";
+
+"favorite_label" = "お気に入り";
+"swipe_left_delete" = "左スワイプ＝削除";
+"swipe_right_keep" = "右スワイプ＝保存";
+"action_kept" = "保存済み";
+"action_deleted" = "削除済み";
+"btn_delete" = "削除";
+"btn_keep" = "保存";
+"nav_title_advanced_review" = "詳細レビュー";
+"btn_cancel" = "キャンセル";
+"btn_done" = "完了";
+"review_progress" = "%@/%@";

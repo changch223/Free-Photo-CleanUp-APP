@@ -1,0 +1,64 @@
+//
+//  Localizable.strings
+//  Free Photo CleanUp APP
+//
+//  Created by chang chiawei on 2025-08-04.
+//
+
+"category_photo" = "Photo";
+"category_selfie" = "Selfie";
+"category_portrait" = "Portrait";
+"category_screenshot" = "Screenshot";
+
+
+"app_title" = "Smart Photo Cleaner";
+"app_subtitle" = "Quickly scan and remove duplicate photos to free up valuable storage.";
+"category_select_title" = "Select scan category";
+"category_limit_hint" = "You can select up to 1,000 photos";
+"progress_scanned" = "Scanned %d / %d photos";
+"progress_loading" = "Loading total...";
+"result_duplicate" = "%d duplicates";
+"result_no_duplicate" = "No duplicates";
+"btn_view" = "View";
+"btn_scan_selected" = "Scan selected categories";
+"progress_total" = "Total Progress: %d / %d photos";
+"result_title" = "Scan Results";
+"alert_over_limit_title" = "Over Limit";
+"alert_over_limit_msg" = "The total selected exceeds the 1,000 limit. Please reduce categories or groups.";
+"alert_over_limit_detail" = "Total selected: %d photos, exceeds the 1,000 limit. Please reduce categories or groups.";
+"alert_finish_title" = "Scan Complete";
+"alert_finish_msg" = "Found %d duplicate photos";
+"ok" = "OK";
+"chunk_title" = "Group %d";
+"chunk_title_count" = "Group %d · %d photos";
+"chunk_menu" = "Group %d (%d photos)";
+
+"loading_scan_result" = "Loading scan results…";
+"stale_data_warning" = "The data may be outdated and will update soon.";
+"not_found_detail_title" = "No scan details found for this category";
+"not_found_detail_msg" = "Please run a scan first, or try again later.";
+"nav_title_view_category" = "%@ Review";
+
+"select_keep" = "Kept: %d / %d";
+"btn_advanced_filter" = "Advanced Filter";
+"batch_action_summary" = "Keep %d, to delete %d";
+"btn_batch_delete" = "Batch Delete";
+"btn_deleting" = "Deleting…";
+"confirm_delete_title" = "Confirm Deletion";
+"confirm_delete_msg" = "Are you sure you want to delete %d photos? They will be moved to 'Recently Deleted'.";
+"delete_failed_title" = "Delete Failed";
+"delete_failed_msg" = "%@";
+"ok" = "OK";
+"nav_title_similar_group" = "Similar Groups";
+
+"favorite_label" = "Favorite";
+"swipe_left_delete" = "Swipe left = Delete";
+"swipe_right_keep" = "Keep = Swipe right";
+"action_kept" = "Kept";
+"action_deleted" = "Deleted";
+"btn_delete" = "Delete";
+"btn_keep" = "Keep";
+"nav_title_advanced_review" = "Advanced Review";
+"btn_cancel" = "Cancel";
+"btn_done" = "Done";
+"review_progress" = "%@/%@";

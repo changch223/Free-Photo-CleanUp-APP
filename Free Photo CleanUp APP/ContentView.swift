@@ -47,17 +47,19 @@ struct ResultRowView: View, Equatable {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text(category.rawValue)
+                Text(category.localizedName)
+
                     .font(.system(size: 16, weight: .semibold))
                 if countsLoading && total == 0 {
                     HStack(spacing: 6) {
                         ProgressView().scaleEffect(0.9)
-                        Text("正在取得總數…")
+                        Text("progress_loading")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                 } else {
-                    Text("已掃描 \(processed) / \(total) 張")
+                    Text(String(format: NSLocalizedString("progress_scanned", comment: ""), processed, total))
+
                         .font(.caption)
                         .foregroundColor(.secondary)
                     if total > 0 {
@@ -75,10 +77,11 @@ struct ResultRowView: View, Equatable {
             }
             Spacer()
             if let result, result.duplicateCount > 0 {
-                Text("重複 \(result.duplicateCount) 張")
+                Text(String(format: NSLocalizedString("result_duplicate", comment: ""), result.duplicateCount))
+
                     .foregroundColor(.red)
                     .font(.system(size: 14))
-                NavigationLink("查看") {
+                NavigationLink("btn_view") {
                     SimilarImagesEntryView(
                         category: category,
                         inlineResult: result // 傳進去當後備資料
@@ -90,7 +93,7 @@ struct ResultRowView: View, Equatable {
                 .background(Color.blue.opacity(0.13))
                 .cornerRadius(10)
             } else {
-                Text("無重複")
+                Text("result_no_duplicate")
                     .foregroundColor(.secondary)
                     .font(.system(size: 14))
             }
@@ -118,12 +121,24 @@ func summariesURL() -> URL {
 
 
 enum PhotoCategory: String, CaseIterable, Identifiable, Codable {
-    case photo = "照片"
-    case selfie = "自拍"
-    case portrait = "人像"
-    case screenshot = "螢幕截圖"
+    case photo
+    case selfie
+    case portrait
+    case screenshot
+
     var id: String { rawValue }
+
+    // 顯示名稱多語化
+    var localizedName: String {
+        switch self {
+        case .photo:      return NSLocalizedString("category_photo", comment: "")
+        case .selfie:     return NSLocalizedString("category_selfie", comment: "")
+        case .portrait:   return NSLocalizedString("category_portrait", comment: "")
+        case .screenshot: return NSLocalizedString("category_screenshot", comment: "")
+        }
+    }
 }
+
 
 struct ScanResult: Codable {
     var date: Date
@@ -140,10 +155,10 @@ extension ContentView {
                 .font(.system(size: 50))
                 .foregroundColor(.blue)
                 
-            Text("智慧照片清理")
+            Text("app_title")
                 .font(.largeTitle).bold()
                 .foregroundColor(.primary)
-            Text("快速掃描並清除手機內重複的照片，釋放更多寶貴的儲存空間。")
+            Text("app_subtitle")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -154,9 +169,9 @@ extension ContentView {
     // 分類選擇
     var categorySelectionView: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("選擇掃描類別")
+            Text("category_select_title")
                 .font(.headline)
-            Text("最多只能選擇1000張照片")
+            Text("category_limit_hint")
                 .font(.subheadline)
             ForEach(PhotoCategory.allCases, id: \.self) { category in
                 let chunks = categoryAssetChunks[category] ?? []
@@ -181,9 +196,11 @@ extension ContentView {
                     
                     // 分類名稱 + 該組張數
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(category.rawValue)
+                        Text(category.localizedName)
+
                             .font(.system(size: 16, weight: .semibold))
-                        Text("第 \(selectedIdx + 1) 組 · \(displayCount) 張")
+                        Text(String(format: NSLocalizedString("chunk_title_count", comment: ""), selectedIdx + 1, displayCount))
+
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -202,19 +219,20 @@ extension ContentView {
                                         }
                                         if total > 1000 {
                                             
-                                            activeAlert = .overLimit( "已選總數超過 1000 上限。請減少分類或組合。")
+                                            activeAlert = .overLimit( "alert_over_limit_msg")
 
                                             // 自動取消這個分類
                                             selectedCategories.remove(category)
                                         }
                                     }
                                 } label: {
-                                    Text("第 \(i+1) 組（\(chunks[i].count) 張）")
+                                    Text(String(format: NSLocalizedString("chunk_title_count", comment: ""), selectedIdx + 1, displayCount))
+
                                 }
                             }
                         } label: {
                             HStack() {
-                                Text("第 \(selectedIdx + 1) 組")
+                                Text(String(format: NSLocalizedString("chunk_menu", comment: ""), selectedIdx + 1, chunks[selectedIdx].count))
                                 Image(systemName: "chevron.down")
                             }
                             .padding(.horizontal, 10)
@@ -245,7 +263,7 @@ extension ContentView {
             }) {
                 HStack {
                     Image(systemName: "wand.and.stars")
-                    Text("掃描所選分類")
+                    Text("btn_scan_selected")
                     if isProcessing {
                         ProgressView()
                             .progressViewStyle(CircularProgressViewStyle())
@@ -278,7 +296,8 @@ extension ContentView {
                 VStack(spacing: 4) {
                     ProgressView(value: Double(selectedProcessed), total: Double(max(selectedTotal, 1)))
                         .accentColor(.blue)
-                    Text("總進度 \(selectedProcessed) / \(selectedTotal) 張")
+                    Text(String(format: NSLocalizedString("progress_total", comment: ""), selectedProcessed, selectedTotal))
+
                         .font(.footnote)
                         .foregroundColor(.secondary)
                 }
@@ -292,7 +311,7 @@ extension ContentView {
     // 掃描結果
     var scanResultsView: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("掃描結果")
+            Text("result_title")
                 .font(.headline)
                 .padding(.leading, 4)
             ForEach(PhotoCategory.allCases, id: \.self) { category in
@@ -408,8 +427,8 @@ struct ContentView: View {
         if targetIsOver {
             if !selectedCategories.isEmpty {
                 // 這裡需要算 total
-                let total = totalCount(for: category)
-                activeAlert = .overLimit("已選總數超過 1000 上限。請減少分類或組合。")
+                _ = totalCount(for: category)
+                activeAlert = .overLimit("alert_over_limit_msg")
                 return
             }
             if selectedCategoryChunks[category] == nil { selectedCategoryChunks[category] = 0 }
@@ -419,8 +438,8 @@ struct ContentView: View {
 
         // 目標 ≤ 1000：可多選，但若目前已有「超過1000的分類」就不行
         if let over = selectedCategories.first(where: { isOverLimitCategory($0) }) {
-            let total = totalCount(for: over)
-            activeAlert = .overLimit("已選總數超過 1000 上限。請減少分類或組合。")
+            _ = totalCount(for: over)
+            activeAlert = .overLimit("alert_over_limit_msg")
             return
         }
 
@@ -430,7 +449,7 @@ struct ContentView: View {
         let total = totalCountOfSelection(newSel)
         if total > 1000 {
             print("超過1000，設置alert：")
-            activeAlert = .overLimit("已選總數超過 1000 上限。請減少分類或組合")
+            activeAlert = .overLimit("alert_over_limit_msg")
         } else {
             selectedCategories = newSel
         }
@@ -481,9 +500,14 @@ struct ContentView: View {
                 .alert(item: $activeAlert) { a in
                     switch a {
                     case .overLimit(let msg):
-                        return Alert(title: Text("超過限制"), message: Text(msg), dismissButton: .default(Text("確定")))
+                        return Alert(title: Text("alert_over_limit_title"), message: Text(msg), dismissButton: .default(Text("ok")))
                     case .finished(let n):
-                        return Alert(title: Text("掃描完成"), message: Text("共找到 \(n) 張重複照片"), dismissButton: .default(Text("確定")))
+                        return Alert(
+                            title: Text(NSLocalizedString("alert_finish_title", comment: "")),
+                            message: Text(String(format: NSLocalizedString("alert_finish_msg", comment: ""), n)),
+                            dismissButton: .default(Text(NSLocalizedString("ok", comment: "")))
+                        )
+
                     }
                 }
                .onAppear {

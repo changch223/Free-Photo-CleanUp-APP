@@ -22,9 +22,9 @@ struct SimilarImagesEntryView: View {
         Group {
             if isLoading {
                 VStack(spacing: 12) {
-                    ProgressView("讀取掃描結果…")
+                    ProgressView("loading_scan_result")
                     if warningStale {
-                        Text("資料可能已過期，稍後會自動更新。")
+                        Text("stale_data_warning")
                             .font(.footnote)
                             .foregroundColor(.secondary)
                     }
@@ -33,7 +33,7 @@ struct SimilarImagesEntryView: View {
                 SimilarImagesView(similarPairs: pairs, assetIds: assetIds)
                     .overlay(alignment: .topTrailing) {
                         if warningStale {
-                            Text("資料可能已過期")
+                            Text("stale_data_warning")
                                 .font(.caption2).bold()
                                 .padding(6)
                                 .background(.ultraThinMaterial)
@@ -46,16 +46,16 @@ struct SimilarImagesEntryView: View {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.largeTitle)
                         .foregroundColor(.orange)
-                    Text("找不到此分類的掃描詳情")
+                    Text("not_found_detail_title")
                         .font(.headline)
-                    Text("請先執行一次掃描，或稍後再試。")
+                    Text("not_found_detail_msg")
                         .font(.footnote)
                         .foregroundColor(.secondary)
                 }
                 .padding(.top, 40)
             }
         }
-        .navigationTitle("\(category.rawValue) 查看")
+        .navigationTitle(String(format: NSLocalizedString("nav_title_view_category", comment: ""), category.localizedName))
         .task { await loadDetailOrFallback() }
     }
 
@@ -142,7 +142,7 @@ struct SimilarImagesView: View {
                                 .padding(.horizontal, 10)
                             }
                             HStack {
-                                Text("已選擇保留：\(selectedKeep[groupIdx]?.count ?? 0) / \(group.count)")
+                                Text(String(format: NSLocalizedString("select_keep", comment: ""), selectedKeep[groupIdx]?.count ?? 0, group.count))
                                     .font(.caption2)
                                     .foregroundColor(.gray)
                                 Spacer()
@@ -151,7 +151,7 @@ struct SimilarImagesView: View {
                                 } label: {
                                     HStack(spacing: 6) {
                                         Image(systemName: "rectangle.and.magnifyingglass")
-                                        Text("進階篩選")
+                                        Text("btn_advanced_filter")
                                     }
                                     .font(.caption)
                                     .padding(.horizontal, 10)
@@ -171,11 +171,11 @@ struct SimilarImagesView: View {
             VStack {
                 Divider()
                 HStack {
-                    Text("保留 \(allKeepIndices.count) 張，預計刪除 \(allDeleteIndices.count) 張")
+                    Text(String(format: NSLocalizedString("batch_action_summary", comment: ""), allKeepIndices.count, allDeleteIndices.count))
                         .font(.footnote)
                     Spacer()
                     Button(action: { showDeleteConfirm = true }) {
-                        Text(isDeleting ? "刪除中…" : "批次刪除")
+                        Text(isDeleting ? NSLocalizedString("btn_deleting", comment: "") : NSLocalizedString("btn_batch_delete", comment: ""))
                             .fontWeight(.bold)
                             .padding(.horizontal, 18)
                             .padding(.vertical, 8)
@@ -194,7 +194,7 @@ struct SimilarImagesView: View {
             .frame(maxWidth: .infinity)
             .padding(.bottom, 0)
         }
-        .navigationTitle("連續相似群組")
+        .navigationTitle("nav_title_similar_group")
         .onAppear {
             // (1) 先用「第一張」建立預設（極快）
             var initial: [Int: Set<Int>] = [:]
@@ -206,14 +206,14 @@ struct SimilarImagesView: View {
             // (2) 背景提升：有最愛就全部加進預設
             Task.detached { await pickAllFavoritesAsDefaultKeep() }
         }
-        .alert("確認刪除", isPresented: $showDeleteConfirm) {
-            Button("取消", role: .cancel) {}
-            Button("刪除", role: .destructive) { performDelete() }
+        .alert("confirm_delete_title", isPresented: $showDeleteConfirm) {
+            Button("btn_cancel", role: .cancel) {}
+            Button("btn_delete", role: .destructive) { performDelete() }
         } message: {
-            Text("確定要刪除 \(allDeleteIndices.count) 張照片嗎？刪除後將移至「最近刪除」。")
+            Text(String(format: NSLocalizedString("confirm_delete_msg", comment: ""), allDeleteIndices.count))
         }
-        .alert("刪除失敗", isPresented: Binding(get: { deleteError != nil }, set: { _ in deleteError = nil })) {
-            Button("知道了", role: .cancel) {}
+        .alert("delete_failed_title", isPresented: Binding(get: { deleteError != nil }, set: { _ in deleteError = nil })) {
+            Button("ok", role: .cancel) {}
         } message: {
             Text(deleteError ?? "")
         }
@@ -413,7 +413,7 @@ struct AdvancedReviewViewSwipe: View {
                                         .foregroundColor(.red)
                                         .font(.system(size: 20))
                                         .shadow(radius: 3)
-                                    Text("最愛")
+                                    Text("favorite_label")
                                         .foregroundColor(.red)
                                         .font(.subheadline.bold())
                                         .shadow(radius: 3)
@@ -437,14 +437,14 @@ struct AdvancedReviewViewSwipe: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "arrow.left")
                                     .foregroundColor(.white)
-                                Text("向左滑=刪除")
+                                Text("swipe_left_delete")
                                     .font(.caption)
                                     .foregroundColor(.white)
                                     .bold()
                             }
                             Spacer()
                             HStack(spacing: 4) {
-                                Text("保留=向右滑")
+                                Text("swipe_right_keep")
                                     .font(.caption)
                                     .foregroundColor(.white)
                                     .bold()
@@ -477,7 +477,7 @@ struct AdvancedReviewViewSwipe: View {
                             .onEnded { v in
                                 if v.translation.width > 40 {
                                     withAnimation {
-                                        feedbackText = "已保留"
+                                        feedbackText = "action_kept"
                                         feedbackColor = .green
                                         feedbackOpacity = 1
                                     }
@@ -485,7 +485,7 @@ struct AdvancedReviewViewSwipe: View {
                                     goNextWithFeedback()
                                 } else if v.translation.width < -40 {
                                     withAnimation {
-                                        feedbackText = "已刪除"
+                                        feedbackText = "action_deleted"
                                         feedbackColor = .red
                                         feedbackOpacity = 1
                                     }
@@ -500,7 +500,7 @@ struct AdvancedReviewViewSwipe: View {
                     HStack(spacing: 16) {
                         Button {
                             withAnimation {
-                                feedbackText = "已刪除"
+                                feedbackText = "action_deleted"
                                 feedbackColor = .red
                                 feedbackOpacity = 1
                             }
@@ -509,7 +509,7 @@ struct AdvancedReviewViewSwipe: View {
                         } label: {
                             HStack {
                                 Image(systemName: "trash")
-                                Text("刪除")
+                                Text("btn_delete")
                             }
                             .padding(.horizontal, 22)
                             .padding(.vertical, 12)
@@ -520,7 +520,7 @@ struct AdvancedReviewViewSwipe: View {
 
                         Button {
                             withAnimation {
-                                feedbackText = "已保留"
+                                feedbackText = "action_kept"
                                 feedbackColor = .green
                                 feedbackOpacity = 1
                             }
@@ -529,7 +529,7 @@ struct AdvancedReviewViewSwipe: View {
                         } label: {
                             HStack {
                                 Image(systemName: "checkmark.circle.fill")
-                                Text("保留")
+                                Text("btn_keep")
                             }
                             .padding(.horizontal, 22)
                             .padding(.vertical, 12)
@@ -541,17 +541,17 @@ struct AdvancedReviewViewSwipe: View {
                     .padding(.bottom, 24)
                 }
             }
-            .navigationTitle("進階篩選")
+            .navigationTitle("nav_title_advanced_review")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
+                    Button("btn_cancel") {
                         onCancel()
                         dismiss()
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") {
+                    Button("btn_done") {
                         let keptGlobals: Set<Int> = Set(
                             localKeep.compactMap { mapToGlobalIndex($0) }
                         )

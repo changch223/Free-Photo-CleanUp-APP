@@ -1,0 +1,64 @@
+//
+//  Localizable.strings
+//  Free Photo CleanUp APP
+//
+//  Created by chang chiawei on 2025-08-04.
+//
+
+"category_photo" = "照片";
+"category_selfie" = "自拍";
+"category_portrait" = "人像";
+"category_screenshot" = "螢幕截圖";
+
+
+"app_title" = "智慧照片清理";
+"app_subtitle" = "快速掃描並清除手機內重複的照片，釋放更多寶貴的儲存空間。";
+"category_select_title" = "選擇掃描類別";
+"category_limit_hint" = "最多只能選擇1000張照片";
+"progress_scanned" = "已掃描 %d / %d 張";
+"progress_loading" = "正在取得總數…";
+"result_duplicate" = "重複 %d 張";
+"result_no_duplicate" = "無重複";
+"btn_view" = "查看";
+"btn_scan_selected" = "掃描所選分類";
+"progress_total" = "總進度 %d / %d 張";
+"result_title" = "掃描結果";
+"alert_over_limit_title" = "超過限制";
+"alert_over_limit_msg" = "已選總數超過 1000 上限。請減少分類或組合。";
+"alert_over_limit_detail" = "已選總數 %d 張，超過 1000 上限。請減少分類或組合。";
+"alert_finish_title" = "掃描完成";
+"alert_finish_msg" = "共找到 %d 張重複照片";
+"ok" = "確定";
+"chunk_title" = "第 %d 組";
+"chunk_title_count" = "第 %d 組 · %d 張";
+"chunk_menu" = "第 %d 組（%d 張）";
+
+"loading_scan_result" = "讀取掃描結果…";
+"stale_data_warning" = "資料可能已過期，稍後會自動更新。";
+"not_found_detail_title" = "找不到此分類的掃描詳情";
+"not_found_detail_msg" = "請先執行一次掃描，或稍後再試。";
+"nav_title_view_category" = "%@ 查看";
+
+"select_keep" = "已選擇保留：%d / %d";
+"btn_advanced_filter" = "進階篩選";
+"batch_action_summary" = "保留 %d 張，預計刪除 %d 張";
+"btn_batch_delete" = "批次刪除";
+"btn_deleting" = "刪除中…";
+"confirm_delete_title" = "確認刪除";
+"confirm_delete_msg" = "確定要刪除 %d 張照片嗎？刪除後將移至「最近刪除」。";
+"delete_failed_title" = "刪除失敗";
+"delete_failed_msg" = "%@";
+"ok" = "知道了";
+"nav_title_similar_group" = "連續相似群組";
+
+"favorite_label" = "最愛";
+"swipe_left_delete" = "向左滑=刪除";
+"swipe_right_keep" = "保留=向右滑";
+"action_kept" = "已保留";
+"action_deleted" = "已刪除";
+"btn_delete" = "刪除";
+"btn_keep" = "保留";
+"nav_title_advanced_review" = "進階篩選";
+"btn_cancel" = "取消";
+"btn_done" = "完成";
+"review_progress" = "%@/%@";

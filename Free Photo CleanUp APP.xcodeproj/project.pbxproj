@@ -48,12 +48,32 @@
 			);
 			target = 57CE0D592E384B9700E0A068 /* Free Photo CleanUp APPUITests */;
 		};
+		57CE0DE02E4177DD00E0A068 /* Exceptions for "Free Photo CleanUp APP" folder in "Free Photo CleanUp APP" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"/Localized: Free_Photo_CleanUp_APP.entitlements",
+				"/Localized: InfoPlist.strings",
+			);
+			target = 57CE0D3F2E384B9600E0A068 /* Free Photo CleanUp APP */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
+		57CE0E702E4183F300E0A068 /* Exceptions for "Free Photo CleanUp APP" folder in "Compile Sources" phase from "Free Photo CleanUp APP" target */ = {
+			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
+			buildPhase = 57CE0D3C2E384B9600E0A068 /* Sources */;
+			membershipExceptions = (
+				"/Localized: InfoPlist.strings",
+			);
+		};
+/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		57CE0D422E384B9600E0A068 /* Free Photo CleanUp APP */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
+				57CE0DE02E4177DD00E0A068 /* Exceptions for "Free Photo CleanUp APP" folder in "Free Photo CleanUp APP" target */,
+				57CE0E702E4183F300E0A068 /* Exceptions for "Free Photo CleanUp APP" folder in "Compile Sources" phase from "Free Photo CleanUp APP" target */,
 				57CE0D892E3AD02800E0A068 /* Exceptions for "Free Photo CleanUp APP" folder in "Free Photo CleanUp APPTests" target */,
 				57CE0D8A2E3AD02800E0A068 /* Exceptions for "Free Photo CleanUp APP" folder in "Free Photo CleanUp APPUITests" target */,
 			);
@@ -217,6 +237,10 @@
 			knownRegions = (
 				en,
 				Base,
+				"zh-Hant",
+				"zh-HK",
+				"zh-Hans",
+				ja,
 			);
 			mainGroup = 57CE0D372E384B9600E0A068;
 			minimizedProjectReferenceProxies = 1;
@@ -415,7 +439,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = "Free Photo CleanUp APP/Free_Photo_CleanUp_APP.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = MY8WU4892D;
@@ -456,7 +480,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = "Free Photo CleanUp APP/Free_Photo_CleanUp_APP.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = MY8WU4892D;
