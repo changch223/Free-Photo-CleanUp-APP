@@ -1,2 +1,8 @@
-<key>CFBundleDisplayName</key>
-<string>Free Photo CleanUp APP</string>
+//
+//  InfoPlist.swift
+//  Free Photo CleanUp APP
+//
+//  Created by chang chiawei on 2025-08-04.
+//
+
+"CFBundleDisplayName" = "Free Photo CleanUp APP";

@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "Free Photo CleanUp APP 1024x1024.png",
+      "filename" : "Free Photo CleanUp APP 2.jpg",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -13,7 +13,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "Free Photo CleanUp APP 1024x1024 1.png",
+      "filename" : "Free Photo CleanUp APP 3.jpg",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -25,7 +25,7 @@
           "value" : "tinted"
         }
       ],
-      "filename" : "Free Photo CleanUp APP 1024x1024 2.png",
+      "filename" : "Free Photo CleanUp APP 1.jpg",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -66,19 +66,17 @@
       "size" : "256x256"
     },
     {
-      "filename" : "Free Photo CleanUp APP 512x512.png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "256x256"
     },
     {
-      "filename" : "Free Photo CleanUp APP 512x512 1.png",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "512x512"
     },
     {
-      "filename" : "Free Photo CleanUp APP 1024x1024 3.png",
+      "filename" : "Free Photo CleanUp APP.jpg",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "512x512"

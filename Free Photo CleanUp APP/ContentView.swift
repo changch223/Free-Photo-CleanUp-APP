@@ -215,7 +215,7 @@ extension ContentView {
                                             chunkCount(for: cat, idx: selectedCategoryChunks[cat] ?? 0) + acc
                                         }
                                         if total > 1000 {
-                                            activeAlert = .overLimit("alert_over_limit_msg")
+                                            activeAlert = .overLimit(NSLocalizedString("alert_over_limit_msg", comment: ""))
                                             // 自動取消這個分類
                                             selectedCategories.remove(category)
                                         }
@@ -425,7 +425,7 @@ struct ContentView: View {
             if !selectedCategories.isEmpty {
                 // 這裡需要算 total
                 _ = totalCount(for: category)
-                activeAlert = .overLimit("alert_over_limit_msg")
+                activeAlert = .overLimit(NSLocalizedString("alert_over_limit_msg", comment: ""))
                 return
             }
             if selectedCategoryChunks[category] == nil { selectedCategoryChunks[category] = 0 }
@@ -436,7 +436,7 @@ struct ContentView: View {
         // 目標 ≤ 1000：可多選，但若目前已有「超過1000的分類」就不行
         if let over = selectedCategories.first(where: { isOverLimitCategory($0) }) {
             _ = totalCount(for: over)
-            activeAlert = .overLimit("alert_over_limit_msg")
+            activeAlert = .overLimit(NSLocalizedString("alert_over_limit_msg", comment: ""))
             return
         }
 
@@ -446,7 +446,7 @@ struct ContentView: View {
         let total = totalCountOfSelection(newSel)
         if total > 1000 {
             print("超過1000，設置alert：")
-            activeAlert = .overLimit("alert_over_limit_msg")
+            activeAlert = .overLimit(NSLocalizedString("alert_over_limit_msg", comment: ""))
         } else {
             selectedCategories = newSel
         }
@@ -509,31 +509,15 @@ struct ContentView: View {
                 }
                .onAppear {
                    Task {
-                       // 1) 載入 summary（極快）
-                       if let s = loadSummary() {
-                           for (raw, cs) in s.categories {
-                               if let cat = PhotoCategory(rawValue: raw) {
-                                   // 只先放 duplicateCount 到 UI，lastGroups/assetIds 先不載
-                                   self.scanResults[cat] = ScanResult(
-                                    date: cs.date,
-                                    duplicateCount: cs.duplicateCount,
-                                    lastGroups: [],      // 查看時才讀 detail
-                                    assetIds: []         // 查看時才讀 detail
-                                   )
-                                   // 顯示總數（可選）
-                                   self.photoVM.categoryCounts[cat] = cs.totalAssetsAtScan
+                       
+                       let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+                       if status == .authorized || status == .limited {
+                           await reloadAllData()
+                       } else {
+                           PHPhotoLibrary.requestAuthorization(for: .readWrite) { newStatus in
+                               if newStatus == .authorized || newStatus == .limited {
+                                   Task { await reloadAllData() }
                                }
-                           }
-                       }
-                       
-                       
-                       // 2) 載入分組（現場資產）供選取顯示數量/分
-                       for cat in PhotoCategory.allCases {
-                           let assets = await fetchAssetsAsync(for: cat)
-                           let chunks = splitAssetsByThousand(assets)       // 你已有的切組方法
-                           categoryAssetChunks[cat] = chunks
-                           if chunks.count > 1 {
-                               selectedCategoryChunks[cat] = 0             // 預設第一組
                            }
                        }
                    }
@@ -541,6 +525,47 @@ struct ContentView: View {
            }
     }
 
+    // 將你的所有初始讀取都包在這個 function
+    func reloadAllData() async {
+        // 1) 載入 summary
+        if let s = loadSummary() {
+            for (raw, cs) in s.categories {
+                if let cat = PhotoCategory(rawValue: raw) {
+                    self.scanResults[cat] = ScanResult(
+                        date: cs.date,
+                        duplicateCount: cs.duplicateCount,
+                        lastGroups: [],
+                        assetIds: []
+                    )
+                    self.photoVM.categoryCounts[cat] = cs.totalAssetsAtScan
+                }
+            }
+        }
+        // 2) 載入分組（現場資產）供選取顯示數量/分
+        for cat in PhotoCategory.allCases {
+            let assets = await fetchAssetsAsync(for: cat)
+            let chunks = splitAssetsByThousand(assets)
+            categoryAssetChunks[cat] = chunks
+            if chunks.count > 1 {
+                selectedCategoryChunks[cat] = 0
+            }
+            // 這裡同步刷新「最新現場照片數」
+            await MainActor.run {
+                self.photoVM.categoryCounts[cat] = assets.count
+            }
+        }
+    }
+    
+    func refreshCategoryCounts() async {
+        for cat in PhotoCategory.allCases {
+            let assets = await fetchAssetsAsync(for: cat)
+            await MainActor.run {
+                self.photoVM.categoryCounts[cat] = assets.count
+            }
+        }
+    }
+
+    
     func totalSelectedAssetsCount() -> Int {
         selectedCategories.reduce(0) { acc, cat in
             let chunks = categoryAssetChunks[cat] ?? []
@@ -760,7 +785,7 @@ struct ContentView: View {
 
                     for i in prevTailEmbs.count..<allEmbs.count {
                         for j in max(0, i - windowSize)..<i {
-                            if cosineSimilarity(allEmbs[i], allEmbs[j]) >= 0.97 {
+                            if cosineSimilarity(allEmbs[i], allEmbs[j]) >= 0.90 {
                                 pairsIndices.append((j, i))
                             }
                         }

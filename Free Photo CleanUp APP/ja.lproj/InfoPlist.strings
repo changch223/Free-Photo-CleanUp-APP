@@ -1,8 +1,10 @@
 //
-//  Untitled.swift
+//  InfoPlist.swift
 //  Free Photo CleanUp APP
 //
 //  Created by chang chiawei on 2025-08-04.
 //
 
-CFBundleDisplayName = "スマート写真クリーナー";
+
+"CFBundleDisplayName" = "スマートAI写真クリーナー";
+
