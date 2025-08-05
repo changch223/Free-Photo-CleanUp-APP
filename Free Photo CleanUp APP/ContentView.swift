@@ -242,9 +242,10 @@ extension ContentView {
                         .disabled(isProcessing)
                     }
                 }
-                .background(Color(.systemGray6))
+                .background(selectedCategories.contains(category) ? Color.blue.opacity(0.08) : Color.clear)
                 .cornerRadius(12)
                 .opacity(isProcessing ? 0.6 : 1)
+
             }
         }
         .padding(.top, 10)

@@ -477,7 +477,7 @@ struct AdvancedReviewViewSwipe: View {
                             .onEnded { v in
                                 if v.translation.width > 40 {
                                     withAnimation {
-                                        feedbackText = "action_kept"
+                                        feedbackText = NSLocalizedString("action_kept", comment: "")
                                         feedbackColor = .green
                                         feedbackOpacity = 1
                                     }
@@ -485,7 +485,7 @@ struct AdvancedReviewViewSwipe: View {
                                     goNextWithFeedback()
                                 } else if v.translation.width < -40 {
                                     withAnimation {
-                                        feedbackText = "action_deleted"
+                                        feedbackText = NSLocalizedString("action_deleted", comment: "")
                                         feedbackColor = .red
                                         feedbackOpacity = 1
                                     }
