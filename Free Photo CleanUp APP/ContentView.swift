@@ -185,22 +185,19 @@ extension ContentView {
                         if !isProcessing {
                             tryToggle(category)
                         }
-                    }  label: {
+                    } label: {
                         Image(systemName: selectedCategories.contains(category) ? "checkmark.square.fill" : "square")
                             .font(.title3)
                             .foregroundColor(selectedCategories.contains(category) ? .blue : .secondary)
                     }
                     .buttonStyle(.plain)
                     .disabled(isProcessing)
-                    
-                    
+
                     // 分類名稱 + 該組張數
                     VStack(alignment: .leading, spacing: 2) {
                         Text(category.localizedName)
-
                             .font(.system(size: 16, weight: .semibold))
                         Text(String(format: NSLocalizedString("chunk_title_count", comment: ""), selectedIdx + 1, displayCount))
-
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -218,20 +215,18 @@ extension ContentView {
                                             chunkCount(for: cat, idx: selectedCategoryChunks[cat] ?? 0) + acc
                                         }
                                         if total > 1000 {
-                                            
-                                            activeAlert = .overLimit( "alert_over_limit_msg")
-
+                                            activeAlert = .overLimit("alert_over_limit_msg")
                                             // 自動取消這個分類
                                             selectedCategories.remove(category)
                                         }
                                     }
                                 } label: {
-                                    Text(String(format: NSLocalizedString("chunk_title_count", comment: ""), selectedIdx + 1, displayCount))
-
+                                    // 這裡才用 i+1 和 chunks[i].count
+                                    Text(String(format: NSLocalizedString("chunk_title_count", comment: ""), i + 1, chunks[i].count))
                                 }
                             }
                         } label: {
-                            HStack() {
+                            HStack {
                                 Text(String(format: NSLocalizedString("chunk_menu", comment: ""), selectedIdx + 1, chunks[selectedIdx].count))
                                 Image(systemName: "chevron.down")
                             }
@@ -250,6 +245,7 @@ extension ContentView {
         }
         .padding(.top, 10)
     }
+
 
 
     
