@@ -23,7 +23,7 @@ _Clean up your library, free up storage, and keep only your best memories! Smart
   Uses image embeddings + cosine similarity to find similar or repeated photos.
 
 - **Private & Secure**  
-  All processing happens on-device — no cloud, no upload, 100% privacy.
+  All processing happens on-device! No cloud, no upload, 100% privacy.
 
 - **Easy bulk cleanup**  
   Select categories or groups and remove clutter with just a tap.
@@ -63,11 +63,11 @@ _Clean up your library, free up storage, and keep only your best memories! Smart
 
 ## ⚙️ How It Works
 
-1. Fetches assets from photo library using `PHAsset`
+1. Fetches assets from the photo library using `PHAsset`
 2. Extracts image embeddings with CoreML (`VNCoreMLRequest`)
 3. Calculates similarity via cosine distance
-4. Groups similar photos using graph clustering
-5. Presents duplicates for user to review, keep, or delete
+4. Group similar photos using graph clustering
+5. Presents duplicates for the user to review, keep, or delete
 
 ---
 
