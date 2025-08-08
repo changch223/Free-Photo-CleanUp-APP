@@ -84,6 +84,7 @@ Free Photo CleanUp APP/
 ├── Core ML Model/             # Embedded CoreML models (e.g. ResNet50, FastViT)
 ├── Localizable.strings        # Multi-language string resources
 └── Assets.xcassets            # App icons and theme assets
+```
 
 ---
 
