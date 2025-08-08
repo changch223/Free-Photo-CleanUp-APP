@@ -73,6 +73,7 @@ _Clean up your library, free up storage, and keep only your best memories — sm
 
 ## 📂 Project Structure
 
+```plaintext
 Free Photo CleanUp APP/
 ├── ContentView.swift          # Main UI logic (category scan, UI components)
 ├── PhotoUtils.swift           # Fetch photos and extract CoreML embeddings
