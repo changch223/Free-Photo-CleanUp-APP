@@ -9,26 +9,26 @@ _Clean up your library, free up storage, and keep only your best memories — sm
 
 ## ✨ Features
 
-- ⚡ **Lightning-fast scanning**  
+- **Lightning-fast scanning**  
   Analyze thousands of photos in seconds with efficient batch processing and Core ML models.
 
-- 🗂️ **Organized by category**  
+- **Organized by category**  
   Automatically group your photos into:
   - Selfies
   - Portraits
   - Screenshots
   - General Photos
 
-- 🧠 **Smart duplicate detection**  
+- **Smart duplicate detection**  
   Uses image embeddings + cosine similarity to find similar or repeated photos.
 
-- 🔒 **Private & Secure**  
+- **Private & Secure**  
   All processing happens on-device — no cloud, no upload, 100% privacy.
 
-- 🧹 **Easy bulk cleanup**  
+- **Easy bulk cleanup**  
   Select categories or groups and remove clutter with just a tap.
 
-- 📊 **Real-time results**  
+- **Real-time results**  
   Instantly see the number of duplicates found by category and monitor progress.
 
 ---
