@@ -74,7 +74,7 @@ _Clean up your library, free up storage, and keep only your best memories! Smart
 ## 📂 Project Structure
 
 ```plaintext
-Smart AI Photo Cleaner/
+Smart-AI-Photo-Cleaner/
 ├── ContentView.swift          # Main UI logic (category scan, UI components)
 ├── PhotoUtils.swift           # Fetch photos and extract CoreML embeddings
 ├── SimilarImagesView.swift    # Display grouped similar photos for deletion
