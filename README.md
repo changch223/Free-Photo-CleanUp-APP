@@ -1,7 +1,7 @@
 # 🧠 Smart AI Photo Cleaner
 
 **Instantly find and delete duplicate photos.**  
-_Clean up your library, free up storage, and keep only your best memories — smarter and faster!_
+_Clean up your library, free up storage, and keep only your best memories! Smarter and Faster!_
 
 > All scanning and processing happen locally on your device. Your photos are never uploaded, ensuring full privacy and security.
 
