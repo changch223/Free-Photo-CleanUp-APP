@@ -36,8 +36,8 @@ _Clean up your library, free up storage, and keep only your best memories — sm
 ## 📸 Screenshots
 
 <div align="center">
-  <img src="Smart-AI-Photo-Cleaner/Screenshot/1.png" width="300"/>
-  <img src="Smart-AI-Photo-Cleaner/Screenshot/2.png" width="300"/>
+  <img src="Screenshot/1.png" width="300"/>
+  <img src="Screenshot/2.png" width="300"/>
 </div>
 
 ---
