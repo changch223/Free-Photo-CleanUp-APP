@@ -52,28 +52,16 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				"/Localized: Free_Photo_CleanUp_APP.entitlements",
-				"/Localized: InfoPlist.strings",
 			);
 			target = 57CE0D3F2E384B9600E0A068 /* Free Photo CleanUp APP */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
-/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-		57CE0E702E4183F300E0A068 /* Exceptions for "Free Photo CleanUp APP" folder in "Compile Sources" phase from "Free Photo CleanUp APP" target */ = {
-			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
-			buildPhase = 57CE0D3C2E384B9600E0A068 /* Sources */;
-			membershipExceptions = (
-				"/Localized: InfoPlist.strings",
-			);
-		};
-/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		57CE0D422E384B9600E0A068 /* Free Photo CleanUp APP */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				57CE0DE02E4177DD00E0A068 /* Exceptions for "Free Photo CleanUp APP" folder in "Free Photo CleanUp APP" target */,
-				57CE0E702E4183F300E0A068 /* Exceptions for "Free Photo CleanUp APP" folder in "Compile Sources" phase from "Free Photo CleanUp APP" target */,
 				57CE0D892E3AD02800E0A068 /* Exceptions for "Free Photo CleanUp APP" folder in "Free Photo CleanUp APPTests" target */,
 				57CE0D8A2E3AD02800E0A068 /* Exceptions for "Free Photo CleanUp APP" folder in "Free Photo CleanUp APPUITests" target */,
 			);
@@ -376,6 +364,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
@@ -431,6 +420,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
 			};
 			name = Release;
 		};
@@ -447,7 +437,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Free-Photo-CleanUp-APP-Info.plist";
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "写真を分析するためにアクセスが必要です";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "This app needs access to your photo library to analyze and clean up duplicate photos";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -489,7 +479,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Free-Photo-CleanUp-APP-Info.plist";
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "写真を分析するためにアクセスが必要です";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "This app needs access to your photo library to analyze and clean up duplicate photos";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
