@@ -54,13 +54,23 @@ final class InterstitialAdManager: NSObject, FullScreenContentDelegate {
 
     // MARK: Present
     /// 嘗試顯示；若未準備好就直接執行 completion
-    func showIfReady(from viewController: UIViewController, completion: (() -> Void)? = nil) {
-        // 頻率控制
+    func showIfReady(from viewController: UIViewController?, completion: (() -> Void)? = nil) {
+        // 冷卻
         if Date().timeIntervalSince(lastShownAt) < cooldown {
             completion?(); return
         }
 
-        // 沒有可用廣告 → 先預載，直接往下做原動作
+        // 先確認 VC 在 window 階層
+        guard let vc = viewController, vc.viewIfLoaded?.window != nil else {
+            // 若還在過場，0.6 秒後試一次
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                guard let self = self else { return }
+                let retryVC = UIApplication.shared.topMostVisibleViewController()
+                self.showIfReady(from: retryVC, completion: completion)
+            }
+            return
+        }
+
         guard let ad = ad else {
             preload()
             completion?()
@@ -68,16 +78,11 @@ final class InterstitialAdManager: NSObject, FullScreenContentDelegate {
         }
 
         lastShownAt = Date()
-        self.ad = nil // 一次性
-        if isDebugMode {
-            print("🛠 [DEBUG] Showing Test Ad")
-        } else {
-            print("📢 Showing Real Ad")
-        }
-        ad.present(from: viewController)
-        // 在關閉時觸發 completion（見 delegate）
-        self.pendingCompletion = completion
+        self.ad = nil
+        pendingCompletion = completion
+        ad.present(from: vc)
     }
+
 
     // 在 onAppear 這種時機使用：有就顯示，沒有就算了
     func maybeShow(from vc: UIViewController) {
@@ -97,16 +102,40 @@ final class InterstitialAdManager: NSObject, FullScreenContentDelegate {
 
 // MARK: - 便捷：取得最上層 VC
 extension UIApplication {
-    func topViewController(base: UIViewController? = {
-        // iOS 13+：抓最前景 Scene 的 keyWindow
-        let scene = UIApplication.shared.connectedScenes
+    /// 取得目前前景 Scene 的 keyWindow
+    func keyWindow() -> UIWindow? {
+        connectedScenes
             .compactMap { $0 as? UIWindowScene }
-            .first(where: { $0.activationState == .foregroundActive })
-        return scene?.windows.first(where: { $0.isKeyWindow })?.rootViewController
-    }()) -> UIViewController? {
-        if let nav = base as? UINavigationController { return topViewController(base: nav.visibleViewController) }
-        if let tab = base as? UITabBarController { return topViewController(base: tab.selectedViewController) }
-        if let presented = base?.presentedViewController { return topViewController(base: presented) }
-        return base
+            .first { $0.activationState == .foregroundActive }?
+            .windows
+            .first { $0.isKeyWindow }
+    }
+
+    /// 找到最上層、而且確定「在 window 階層中的」VC
+    func topMostVisibleViewController() -> UIViewController? {
+        guard var vc = keyWindow()?.rootViewController else { return nil }
+
+        func visible(from base: UIViewController) -> UIViewController {
+            if let nav = base as? UINavigationController, let top = nav.visibleViewController {
+                return visible(from: top)
+            }
+            if let tab = base as? UITabBarController, let sel = tab.selectedViewController {
+                return visible(from: sel)
+            }
+            if let presented = base.presentedViewController {
+                return visible(from: presented)
+            }
+            return base
+        }
+
+        vc = visible(from: vc)
+
+        // 若目前這個 VC 不在 window 階層，往它的 presentingViewController 回退，直到找到在 window 的
+        var safe = vc
+        while safe.viewIfLoaded?.window == nil, let presenter = safe.presentingViewController {
+            safe = presenter
+        }
+        return (safe.viewIfLoaded?.window != nil) ? safe : keyWindow()?.rootViewController
     }
 }
+

@@ -93,8 +93,8 @@ struct ResultRowView: View, Equatable {
 
                 // B. 顯示給使用者點的按鈕：先插頁，後導頁
                 Button {
-                    if let vc = UIApplication.shared.topViewController() {
-                        InterstitialAdManager.shared.showIfReady(from: vc) {
+                    if let vc = UIApplication.shared.topMostVisibleViewController() {
+                            InterstitialAdManager.shared.showIfReady(from: vc){
                             goDetail = true
                         }
                     } else {
@@ -482,12 +482,15 @@ struct ContentView: View {
     }
 
     private func runAfterInterstitial(_ work: @escaping () -> Void) {
-        if let vc = UIApplication.shared.topViewController() {
-            InterstitialAdManager.shared.showIfReady(from: vc, completion: work)
-        } else {
-            work()
+        DispatchQueue.main.async {
+            if let vc = UIApplication.shared.topMostVisibleViewController() {
+                InterstitialAdManager.shared.showIfReady(from: vc, completion: work)
+            } else {
+                work()
+            }
         }
     }
+
 
 
     
@@ -558,9 +561,12 @@ struct ContentView: View {
                             }
                         }
                     }
-                    if let vc = UIApplication.shared.topViewController() {
-                        InterstitialAdManager.shared.maybeShow(from: vc)
-                    }
+                    if let vc = UIApplication.shared.topMostVisibleViewController() {
+                           InterstitialAdManager.shared.maybeShow(from: vc)
+                       } else {
+                           // 找不到可見 VC 時，至少先預載
+                           InterstitialAdManager.shared.preload()
+                       }
 
                 }
             }

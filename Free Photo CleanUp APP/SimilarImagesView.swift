@@ -59,6 +59,8 @@ struct SimilarImagesEntryView: View {
         .task { await loadDetailOrFallback() }
     }
 
+
+    
     /// 讀 detail 檔；若無則退回 inline 結果
     private func loadDetailOrFallback() async {
         // 先嘗試讀取磁碟
@@ -118,6 +120,16 @@ struct SimilarImagesView: View {
         }
     }
 
+    private func showInterstitialAfterCoverDismissed() {
+        // 等動畫/層級穩定
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            let vc = UIApplication.shared.topMostVisibleViewController()
+            InterstitialAdManager.shared.showIfReady(from: vc, completion: nil)
+        }
+    }
+
+
+    
     var body: some View {
         ZStack(alignment: .bottom) {
             ScrollView {
@@ -224,6 +236,7 @@ struct SimilarImagesView: View {
             let gIdx = token.id
             let memberIndices = grouped[safe: gIdx] ?? []
             let memberIDs = memberIndices.compactMap { assetIds[safe: $0] }
+
             AdvancedReviewViewSwipe(
                 assetIDs: memberIDs,
                 initiallyKept: selectedKeep[gIdx] ?? [],
@@ -231,8 +244,12 @@ struct SimilarImagesView: View {
                 onFinish: { keptGlobals in
                     selectedKeep[gIdx] = keptGlobals
                     reviewingGroupIndex = nil
+                    showInterstitialAfterCoverDismissed()
                 },
-                onCancel: { reviewingGroupIndex = nil }
+                onCancel: {
+                    reviewingGroupIndex = nil
+                    showInterstitialAfterCoverDismissed()
+                }
             )
         }
     }
@@ -553,17 +570,9 @@ struct AdvancedReviewViewSwipe: View {
                         )
                         onFinish(keptGlobals)
                         dismiss()
-
-                        // 返回上一頁後，稍等一下再嘗試顯示插頁
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            if let vc = UIApplication.shared.topViewController() {
-                                InterstitialAdManager.shared.maybeShow(from: vc)
-                            }
-                        }
                     }
                 }
             }
-
             .onAppear {
                 localKeep = initiallyKept
                 loadFavoriteStatus()
@@ -586,16 +595,11 @@ struct AdvancedReviewViewSwipe: View {
                 )
                 onFinish(keptGlobals)
                 dismiss()
-
-                // 同樣在自動走到最後一張結束時，返回上一頁後顯示插頁
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    if let vc = UIApplication.shared.topViewController() {
-                        InterstitialAdManager.shared.maybeShow(from: vc)
-                    }
-                }
             }
         }
     }
+
+
 
     private func loadFavoriteStatus() {
         guard assetIDs.indices.contains(currentIndex) else { isFavorite = false; return }
