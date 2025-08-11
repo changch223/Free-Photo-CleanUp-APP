@@ -5,6 +5,8 @@
 
 import SwiftUI
 import Photos
+import UIKit
+
 
 enum ActiveAlert: Identifiable {
     case overLimit(String)
@@ -34,10 +36,10 @@ struct ResultRowView: View, Equatable {
     let processed: Int
     let countsLoading: Bool
     let result: ScanResult?
-    //let similarPairs: [(Int, Int)]
+    @State private var goDetail = false
+
 
     static func == (lhs: ResultRowView, rhs: ResultRowView) -> Bool {
-        // 只比對這些即可
         lhs.category == rhs.category &&
         lhs.total == rhs.total &&
         lhs.processed == rhs.processed &&
@@ -46,13 +48,10 @@ struct ResultRowView: View, Equatable {
 
     var body: some View {
         HStack {
-            BannerAdView(adUnitID: "ca-app-pub-9275380963550837/9201898058")
-                .frame(height: 50)
-            
             VStack(alignment: .leading, spacing: 4) {
                 Text(category.localizedName)
-
                     .font(.system(size: 16, weight: .semibold))
+
                 if countsLoading && total == 0 {
                     HStack(spacing: 6) {
                         ProgressView().scaleEffect(0.9)
@@ -62,9 +61,9 @@ struct ResultRowView: View, Equatable {
                     }
                 } else {
                     Text(String(format: NSLocalizedString("progress_scanned", comment: ""), processed, total))
-
                         .font(.caption)
                         .foregroundColor(.secondary)
+
                     if total > 0 {
                         ProgressView(value: Double(processed), total: Double(total))
                             .tint(.blue)
@@ -78,23 +77,38 @@ struct ResultRowView: View, Equatable {
                     }
                 }
             }
+
             Spacer()
+
             if let result, result.duplicateCount > 0 {
                 Text(String(format: NSLocalizedString("result_duplicate", comment: ""), result.duplicateCount))
-
                     .foregroundColor(.red)
                     .font(.system(size: 14))
-                NavigationLink("btn_view") {
-                    SimilarImagesEntryView(
-                        category: category,
-                        inlineResult: result // 傳進去當後備資料
-                    )
+
+                // A. 隱藏的 NavigationLink 由狀態觸發
+                NavigationLink(destination:
+                    SimilarImagesEntryView(category: category, inlineResult: result),
+                    isActive: $goDetail
+                ) { EmptyView() }.frame(width: 0, height: 0).hidden()
+
+                // B. 顯示給使用者點的按鈕：先插頁，後導頁
+                Button {
+                    if let vc = UIApplication.shared.topViewController() {
+                        InterstitialAdManager.shared.showIfReady(from: vc) {
+                            goDetail = true
+                        }
+                    } else {
+                        goDetail = true
+                    }
+                } label: {
+                    Text("btn_view")
+                        .font(.callout)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(Color.blue.opacity(0.13))
+                        .cornerRadius(10)
                 }
-                .font(.callout)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
-                .background(Color.blue.opacity(0.13))
-                .cornerRadius(10)
+                
             } else {
                 Text("result_no_duplicate")
                     .foregroundColor(.secondary)
@@ -108,6 +122,7 @@ struct ResultRowView: View, Equatable {
         .padding(.horizontal, 4)
     }
 }
+
 
 
 struct LazyView<Content: View>: View {
@@ -259,8 +274,11 @@ extension ContentView {
     
             
             Button(action: {
-                startScanMultiple(selected: Array(selectedCategories))
+                runAfterInterstitial {
+                    startScanMultiple(selected: Array(selectedCategories))
+                }
             }) {
+                // 原本的 label 一樣
                 HStack {
                     Image(systemName: "wand.and.stars")
                     Text("btn_scan_selected")
@@ -463,6 +481,13 @@ struct ContentView: View {
         selectedCategories = [category]
     }
 
+    private func runAfterInterstitial(_ work: @escaping () -> Void) {
+        if let vc = UIApplication.shared.topViewController() {
+            InterstitialAdManager.shared.showIfReady(from: vc, completion: work)
+        } else {
+            work()
+        }
+    }
 
 
     
@@ -471,61 +496,75 @@ struct ContentView: View {
     
     var body: some View {
         NavigationView {
-                ZStack {
-                    // 主要內容 ScrollView，可捲動不跑版
-                    ScrollView(.vertical, showsIndicators: false) {
-                        VStack(spacing: 16) {
-                            headerView
-                                .padding(.top, 10)
-                                .card()
-                            categorySelectionView
-                                .card()
-                            globalProgressView
-                            scanResultsView
-                                .card()
-                            Spacer(minLength: 100) // 預留底部空間避免被按鈕遮住
-                        }
-                        .padding(.horizontal, 8)
+            ZStack {
+                // 主要內容 ScrollView，可捲動不跑版
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 16) {
+                        headerView
+                            .padding(.top, 10)
+                            .card()
+                        categorySelectionView
+                            .card()
+                        globalProgressView
+                        scanResultsView
+                            .card()
+                        Spacer(minLength: 100) // 預留底部空間避免被按鈕遮住
                     }
-                    // 底部主要操作按鈕固定，不被內容或鍵盤推擠
-                    .safeAreaInset(edge: .bottom) {
+                    .padding(.horizontal, 8)
+                }
+                // 底部主要操作按鈕固定，不被內容或鍵盤推擠
+                // 底部主要操作＋Banner 一起貼底
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    VStack(spacing: 0) {
+                        // 想要按鈕在上就放前面；想要 Banner 在上就顛倒順序
                         actionButtonsView
-                            .padding(.bottom, 10)
-                            .background(.ultraThinMaterial)
-                    }
-                }
-                .background(Color(.systemGray6))
-                .navigationBarHidden(true)
-                // 所有alert全部掛在根視圖
-                .alert(item: $activeAlert) { a in
-                    switch a {
-                    case .overLimit(let msg):
-                        return Alert(title: Text("alert_over_limit_title"), message: Text(msg), dismissButton: .default(Text("ok")))
-                    case .finished(let n):
-                        return Alert(
-                            title: Text(NSLocalizedString("alert_finish_title", comment: "")),
-                            message: Text(String(format: NSLocalizedString("alert_finish_msg", comment: ""), n)),
-                            dismissButton: .default(Text(NSLocalizedString("ok", comment: "")))
-                        )
+                            .padding(.horizontal)
+                            .padding(.vertical, 10)
 
+                        Divider().opacity(0.15) // 可選：細分隔線
+
+                        BannerAdView(adUnitID: "ca-app-pub-9275380963550837/9201898058")
+                            .frame(height: 50)
                     }
+                    .background(.ultraThinMaterial) // 一層背景就好
                 }
-               .onAppear {
-                   Task {
-                       
-                       let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-                       if status == .authorized || status == .limited {
-                           await reloadAllData()
-                       } else {
-                           PHPhotoLibrary.requestAuthorization(for: .readWrite) { newStatus in
-                               if newStatus == .authorized || newStatus == .limited {
-                                   Task { await reloadAllData() }
-                               }
-                           }
-                       }
-                   }
-               }
-           }
+            }
+            .background(Color(.systemGray6))
+            .navigationBarHidden(true)
+            // 所有alert全部掛在根視圖
+            .alert(item: $activeAlert) { a in
+                switch a {
+                case .overLimit(let msg):
+                    return Alert(title: Text("alert_over_limit_title"), message: Text(msg), dismissButton: .default(Text("ok")))
+                case .finished(let n):
+                    return Alert(
+                        title: Text(NSLocalizedString("alert_finish_title", comment: "")),
+                        message: Text(String(format: NSLocalizedString("alert_finish_msg", comment: ""), n)),
+                        dismissButton: .default(Text(NSLocalizedString("ok", comment: "")))
+                    )
+                    
+                }
+            }
+            .onAppear {
+                Task {
+                    
+                    let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+                    if status == .authorized || status == .limited {
+                        await reloadAllData()
+                    } else {
+                        PHPhotoLibrary.requestAuthorization(for: .readWrite) { newStatus in
+                            if newStatus == .authorized || newStatus == .limited {
+                                Task { await reloadAllData() }
+                            }
+                        }
+                    }
+                    if let vc = UIApplication.shared.topViewController() {
+                        InterstitialAdManager.shared.maybeShow(from: vc)
+                    }
+
+                }
+            }
+        }
     }
 
     // 將你的所有初始讀取都包在這個 function

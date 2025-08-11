@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		1775774D17D952D816380FAA /* libPods-Free Photo CleanUp APP.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A96E923558494DA68900525A /* libPods-Free Photo CleanUp APP.a */; };
+		2A26C98C77FF21952B9B84F9 /* Pods_Free_Photo_CleanUp_APP.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 17B501C20CE35A58EAD7D935 /* Pods_Free_Photo_CleanUp_APP.framework */; };
 		57CE132F2E497DBE00E0A068 /* GoogleMobileAds in Frameworks */ = {isa = PBXBuildFile; productRef = 57CE132E2E497DBE00E0A068 /* GoogleMobileAds */; };
 /* End PBXBuildFile section */
 
@@ -30,11 +30,11 @@
 
 /* Begin PBXFileReference section */
 		01CCFE66972A88F94AC4A0BE /* Pods-Free Photo CleanUp APP.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Free Photo CleanUp APP.release.xcconfig"; path = "Target Support Files/Pods-Free Photo CleanUp APP/Pods-Free Photo CleanUp APP.release.xcconfig"; sourceTree = "<group>"; };
+		17B501C20CE35A58EAD7D935 /* Pods_Free_Photo_CleanUp_APP.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Free_Photo_CleanUp_APP.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		26288D7DA17352EBB717C903 /* Pods-Free Photo CleanUp APP.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Free Photo CleanUp APP.debug.xcconfig"; path = "Target Support Files/Pods-Free Photo CleanUp APP/Pods-Free Photo CleanUp APP.debug.xcconfig"; sourceTree = "<group>"; };
 		57CE0D402E384B9600E0A068 /* Free Photo CleanUp APP.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Free Photo CleanUp APP.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		57CE0D502E384B9700E0A068 /* Free Photo CleanUp APPTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Free Photo CleanUp APPTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		57CE0D5A2E384B9700E0A068 /* Free Photo CleanUp APPUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Free Photo CleanUp APPUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
-		A96E923558494DA68900525A /* libPods-Free Photo CleanUp APP.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Free Photo CleanUp APP.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -78,15 +78,11 @@
 		};
 		57CE0D532E384B9700E0A068 /* Free Photo CleanUp APPTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = "Free Photo CleanUp APPTests";
 			sourceTree = "<group>";
 		};
 		57CE0D5D2E384B9700E0A068 /* Free Photo CleanUp APPUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = "Free Photo CleanUp APPUITests";
 			sourceTree = "<group>";
 		};
@@ -98,7 +94,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				57CE132F2E497DBE00E0A068 /* GoogleMobileAds in Frameworks */,
-				1775774D17D952D816380FAA /* libPods-Free Photo CleanUp APP.a in Frameworks */,
+				2A26C98C77FF21952B9B84F9 /* Pods_Free_Photo_CleanUp_APP.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -153,7 +149,7 @@
 		730B58AED276DDF9A39C1F92 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				A96E923558494DA68900525A /* libPods-Free Photo CleanUp APP.a */,
+				17B501C20CE35A58EAD7D935 /* Pods_Free_Photo_CleanUp_APP.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -309,9 +305,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-Free Photo CleanUp APP/Pods-Free Photo CleanUp APP-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-Free Photo CleanUp APP/Pods-Free Photo CleanUp APP-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;

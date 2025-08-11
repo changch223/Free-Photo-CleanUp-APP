@@ -1,18 +1,25 @@
 import SwiftUI
 import SwiftData
-import GoogleMobileAds
 import UIKit
+import GoogleMobileAds
 
-class AppDelegate: NSObject, UIApplicationDelegate {
+final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil
     ) -> Bool {
+
+        // 確認 Info.plist 有讀到 App ID（除錯用）
+        let appID = Bundle.main.object(forInfoDictionaryKey: "GADApplicationIdentifier") as? String ?? "nil"
+        print("GADApplicationIdentifier =", appID)
+
+        // ✅ 正確初始化 AdMob SDK（v10/v11 皆可用）
         MobileAds.shared.start(completionHandler: nil)
+        InterstitialAdManager.shared.preload()
+
         return true
     }
 }
-
 
 @main
 struct Free_Photo_CleanUp_APPApp: App {
@@ -32,12 +39,12 @@ struct Free_Photo_CleanUp_APPApp: App {
         WindowGroup {
             ContentView()
                 .onAppear {
+                    // 等畫面起來後再載 App Open Ad，避免與 SDK 初始化衝突
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                         AppOpenAdManager.shared.loadAd()
                     }
                 }
         }
-        // 這個修飾子要掛在 WindowGroup（Scene）外面
         .modelContainer(sharedModelContainer)
     }
 }

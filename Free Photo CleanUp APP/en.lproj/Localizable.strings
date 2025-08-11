@@ -12,7 +12,7 @@
 
 
 "app_title" = "Smart Photo Cleaner";
-"app_subtitle" = "Quickly scan and remove duplicate photos to free up valuable storage.";
+"app_subtitle" = "Quickly scan and remove duplicate photos to free up valuable storage";
 "category_select_title" = "Select scan category";
 "category_limit_hint" = "You can select up to 1,000 photos";
 "progress_scanned" = "Scanned %d / %d photos";

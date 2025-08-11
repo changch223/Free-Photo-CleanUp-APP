@@ -15,7 +15,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "08199AF654701F9A92018883918B7433"
-               BuildableName = "libPods-Free Photo CleanUp APP.a"
+               BuildableName = "Pods_Free_Photo_CleanUp_APP.framework"
                BlueprintName = "Pods-Free Photo CleanUp APP"
                ReferencedContainer = "container:Pods.xcodeproj">
             </BuildableReference>

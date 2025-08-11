@@ -142,7 +142,8 @@ struct SimilarImagesView: View {
                                 .padding(.horizontal, 10)
                             }
                             HStack {
-                                Text(String(format: NSLocalizedString("select_keep", comment: ""), selectedKeep[groupIdx]?.count ?? 0, group.count))
+                                Text(String(format: NSLocalizedString("select_keep", comment: ""),
+                                            selectedKeep[groupIdx]?.count ?? 0, group.count))
                                     .font(.caption2)
                                     .foregroundColor(.gray)
                                 Spacer()
@@ -165,17 +166,21 @@ struct SimilarImagesView: View {
                     }
                 }
                 .padding(.top)
-                .padding(.bottom, 60)
+                .padding(.bottom, 8) // 原來 60 → 8，因為我們用 safeAreaInset 了
             }
-
-            VStack {
-                Divider()
+        }
+        // 把底部工具列 + Banner 合併成一個 inset（這樣全頁就只有一條固定 Banner）
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
                 HStack {
-                    Text(String(format: NSLocalizedString("batch_action_summary", comment: ""), allKeepIndices.count, allDeleteIndices.count))
+                    Text(String(format: NSLocalizedString("batch_action_summary", comment: ""),
+                                allKeepIndices.count, allDeleteIndices.count))
                         .font(.footnote)
                     Spacer()
                     Button(action: { showDeleteConfirm = true }) {
-                        Text(isDeleting ? NSLocalizedString("btn_deleting", comment: "") : NSLocalizedString("btn_batch_delete", comment: ""))
+                        Text(isDeleting
+                             ? NSLocalizedString("btn_deleting", comment: "")
+                             : NSLocalizedString("btn_batch_delete", comment: ""))
                             .fontWeight(.bold)
                             .padding(.horizontal, 18)
                             .padding(.vertical, 8)
@@ -187,23 +192,18 @@ struct SimilarImagesView: View {
                 }
                 .padding()
                 .background(.ultraThinMaterial)
-                .cornerRadius(16)
-                .shadow(radius: 5)
-                .padding(.horizontal)
+
+                BannerAdView(adUnitID: "ca-app-pub-9275380963550837/9201898058")
+                    .frame(height: 50)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.bottom, 0)
         }
         .navigationTitle("nav_title_similar_group")
         .onAppear {
-            // (1) 先用「第一張」建立預設（極快）
             var initial: [Int: Set<Int>] = [:]
             for (i, group) in groupSimilarImages(pairs: similarPairs).enumerated() {
                 if let first = group.first { initial[i] = [first] }
             }
             selectedKeep = initial
-
-            // (2) 背景提升：有最愛就全部加進預設
             Task.detached { await pickAllFavoritesAsDefaultKeep() }
         }
         .alert("confirm_delete_title", isPresented: $showDeleteConfirm) {
@@ -217,14 +217,9 @@ struct SimilarImagesView: View {
         } message: {
             Text(deleteError ?? "")
         }
-        // 進階篩選全螢幕
         .fullScreenCover(item: Binding(
-            get: {
-                reviewingGroupIndex.map { ReviewToken(id: $0) }
-            },
-            set: { token in
-                reviewingGroupIndex = token?.id
-            }
+            get: { reviewingGroupIndex.map { ReviewToken(id: $0) } },
+            set: { token in reviewingGroupIndex = token?.id }
         )) { token in
             let gIdx = token.id
             let memberIndices = grouped[safe: gIdx] ?? []
@@ -241,6 +236,7 @@ struct SimilarImagesView: View {
             )
         }
     }
+
 
     // 只要是最愛都加到保留（全 group 內檢查）
     private func pickAllFavoritesAsDefaultKeep() async {

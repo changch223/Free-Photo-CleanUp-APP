@@ -13,7 +13,7 @@
 
 
 "app_title" = "スマート写真クリーナー";
-"app_subtitle" = "重複写真を素早くスキャンし削除して、大切なストレージを解放します。";
+"app_subtitle" = "重複写真を素早くスキャンし削除して、大切なストレージを解放します";
 "category_select_title" = "スキャンカテゴリを選択";
 "category_limit_hint" = "最大1,000枚まで選択できます";
 "progress_scanned" = "%d / %d 枚をスキャン済み";

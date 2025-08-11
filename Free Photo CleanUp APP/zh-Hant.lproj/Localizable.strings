@@ -12,7 +12,7 @@
 
 
 "app_title" = "智慧照片清理";
-"app_subtitle" = "快速掃描並清除手機內重複的照片，釋放更多寶貴的儲存空間。";
+"app_subtitle" = "快速掃描並清除手機內重複的照片，釋放更多寶貴的儲存空間";
 "category_select_title" = "選擇掃描類別";
 "category_limit_hint" = "最多只能選擇1000張照片";
 "progress_scanned" = "已掃描 %d / %d 張";
