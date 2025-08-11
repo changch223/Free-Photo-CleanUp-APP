@@ -1,4 +1,4 @@
-# 🧠 Smart AI Photo Cleaner
+# 🧹 Smart AI Photo Cleaner
 
 **Instantly find and delete duplicate photos!**  
 _Clean up your library, free up storage, and keep only your best memories! Smarter and Faster!_
