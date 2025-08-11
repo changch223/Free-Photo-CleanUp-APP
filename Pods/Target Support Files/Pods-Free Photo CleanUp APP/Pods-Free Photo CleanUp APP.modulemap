@@ -1,0 +1,6 @@
+module Pods_Free_Photo_CleanUp_APP {
+  umbrella header "Pods-Free Photo CleanUp APP-umbrella.h"
+
+  export *
+  module * { export * }
+}

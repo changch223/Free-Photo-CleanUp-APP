@@ -46,6 +46,9 @@ struct ResultRowView: View, Equatable {
 
     var body: some View {
         HStack {
+            BannerAdView(adUnitID: "ca-app-pub-9275380963550837/9201898058")
+                .frame(height: 50)
+            
             VStack(alignment: .leading, spacing: 4) {
                 Text(category.localizedName)
 
