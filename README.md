@@ -96,7 +96,7 @@ Smart-AI-Photo-Cleaner/
 
 ## 📥 Download
 
-> Coming soon on the [App Store](https://apps.apple.com/)  
+> Coming soon on the [App Store](https://apps.apple.com/us/app/smart-ai-photo-cleaner/id6749556382)  
 _(Stay tuned!)_
 
 ---
