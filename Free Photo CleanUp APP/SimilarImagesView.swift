@@ -553,9 +553,17 @@ struct AdvancedReviewViewSwipe: View {
                         )
                         onFinish(keptGlobals)
                         dismiss()
+
+                        // 返回上一頁後，稍等一下再嘗試顯示插頁
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            if let vc = UIApplication.shared.topViewController() {
+                                InterstitialAdManager.shared.maybeShow(from: vc)
+                            }
+                        }
                     }
                 }
             }
+
             .onAppear {
                 localKeep = initiallyKept
                 loadFavoriteStatus()
@@ -578,9 +586,17 @@ struct AdvancedReviewViewSwipe: View {
                 )
                 onFinish(keptGlobals)
                 dismiss()
+
+                // 同樣在自動走到最後一張結束時，返回上一頁後顯示插頁
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    if let vc = UIApplication.shared.topViewController() {
+                        InterstitialAdManager.shared.maybeShow(from: vc)
+                    }
+                }
             }
         }
     }
+
     private func loadFavoriteStatus() {
         guard assetIDs.indices.contains(currentIndex) else { isFavorite = false; return }
         let id = assetIDs[currentIndex]
