@@ -18,25 +18,128 @@ private let sharedCIContext: CIContext = {
     return CIContext(options: opts)
 }()
 
+/// 更穩定的模糊判斷：自適應邊緣門檻 + 中心加權 + 變異數雙條件
+private func isBlurryAdaptiveCenterWeighted(
+    _ image: UIImage,
+    varianceThreshold: Float = BLUR_VARIANCE_THRESHOLD, // 例如 60~90
+    kStd: Float = 1.0,        // 邊緣門檻 = mean + k*std，建議 0.8~1.5
+    minSharpRatioGlobal: Float = 0.12, // 整張最低銳利比例
+    minSharpRatioCenter: Float = 0.25, // 中心區域最低銳利比例（更寬鬆）
+    gaussianRadius: CGFloat = 0.8      // 降噪
+) -> Bool {
+    guard let srcCG = image.cgImage else { return false }
 
-/// 回傳 Laplacian 影像像素的變異數：越大越清晰、越小越模糊
-private func laplacianVarianceScore(_ image: UIImage) -> Float? {
-    guard let srcCG = image.cgImage else { return nil }
+    // 1) 前處理（縮放、灰階、輕微降噪）
+    let targetW: CGFloat = 224
+    let ciIn = CIImage(cgImage: srcCG)
+    let sx = targetW / CGFloat(srcCG.width)
+    let sy = targetW / CGFloat(srcCG.height)
+    let scaled = ciIn.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+    let gray = scaled.applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0])
+    let blurred = gray.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: gaussianRadius])
 
-    // 建 CIImage，縮到較小尺寸以加快運算（224 與你的 embedding 尺寸一致）
+    // 2) Laplacian 卷積
+    let weights: [CGFloat] = [-1,-1,-1, -1,8,-1, -1,-1,-1]
+    guard
+        let convolved = CIFilter(
+            name: "CIConvolution3X3",
+            parameters: [
+                kCIInputImageKey: blurred,
+                "inputWeights": CIVector(values: weights, count: 9),
+                "inputBias": 0
+            ]
+        )?.outputImage
+    else { return false }
+
+    // 3) 拉回 RGBA8 buffer（R=G=B）
+    let rect = CGRect(x: 0, y: 0,
+                      width: Int(max(1, round(targetW))),
+                      height: Int(max(1, round(targetW))))
+    guard let outCG = sharedCIContext.createCGImage(convolved, from: rect) else { return false }
+
+    let width = outCG.width, height = outCG.height
+    let bytesPerPixel = 4, bytesPerRow = width * bytesPerPixel
+    var buf = [UInt8](repeating: 0, count: Int(bytesPerRow * height))
+    guard let ctx = CGContext(
+        data: &buf, width: width, height: height, bitsPerComponent: 8,
+        bytesPerRow: bytesPerRow, space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else { return false }
+    ctx.draw(outCG, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+    // 4) 取 R 通道 -> Float 陣列
+    let count = width * height
+    var lap = [Float](repeating: 0, count: count)
+    var idx = 0
+    for i in stride(from: 0, to: buf.count, by: 4) { lap[idx] = Float(buf[i]); idx += 1 }
+
+    // 5) 變異數（整體清晰度指標）
+    var mean: Float = 0, meanSquares: Float = 0
+    vDSP_meanv(lap, 1, &mean, vDSP_Length(count))
+    vDSP_measqv(lap, 1, &meanSquares, vDSP_Length(count))
+    let variance = max(0, meanSquares - mean * mean)
+
+    // 6) 自適應邊緣門檻：thr = mean + k*std
+    var std: Float = 0
+    vDSP_normalize(lap, 1, nil, 1, &mean, &std, vDSP_Length(count)) // 只取出 mean/std
+    let edgeThr = mean + kStd * std
+
+    // 7) 全圖銳利比例
+    let sharpGlobal = lap.reduce(into: 0) { $0 += ($1 > edgeThr ? 1 : 0) }
+    let sharpRatioGlobal = Float(sharpGlobal) / Float(max(1, count))
+
+    // 8) 中心 60% 區域銳利比例（主體保護）
+    let cx0 = Int(Float(width) * 0.2),  cx1 = Int(Float(width) * 0.8)
+    let cy0 = Int(Float(height) * 0.2), cy1 = Int(Float(height) * 0.8)
+    var centerSharp = 0, centerTotal = 0
+    for y in cy0..<cy1 {
+        let row = y * width
+        for x in cx0..<cx1 {
+            if lap[row + x] > edgeThr { centerSharp += 1 }
+            centerTotal += 1
+        }
+    }
+    let sharpRatioCenter = Float(centerSharp) / Float(max(1, centerTotal))
+
+    // 9) 決策：需同時「變異數低」且「中心與全圖銳利比例都低」才判定模糊
+    let looksBlurryByVar   = variance < varianceThreshold
+    let looksSharpGlobally = sharpRatioGlobal >= minSharpRatioGlobal
+    let looksSharpCenter   = sharpRatioCenter >= minSharpRatioCenter
+
+    return looksBlurryByVar && !(looksSharpGlobally || looksSharpCenter)
+}
+
+
+/// 綜合判斷是否模糊：同時看 Laplacian 變異數 + 銳利比例
+/// - Parameters:
+///   - image: 來源影像
+///   - varianceThreshold: 變異數門檻（越低越嚴格）
+///   - edgeThreshold: 以像素為單位的 Laplacian 強度門檻（用來做銳利遮罩）
+///   - minSharpRatio: 銳利像素比例的下限，>= 這個比例就判定「不模糊」
+/// - Returns: true 代表視為模糊
+private func isBlurryByVarianceAndSharpRatio(
+    _ image: UIImage,
+    varianceThreshold: Float = BLUR_VARIANCE_THRESHOLD, // 你上面設 70
+    edgeThreshold: Float = 4.0,   // 可調：6~12 常見
+    minSharpRatio: Float = 0.2    // 你要的一半
+) -> Bool {
+
+    guard let srcCG = image.cgImage else { return false }
+
+    // ====== 與 laplacianVarianceScore 相同的前處理 ======
     let ciIn = CIImage(cgImage: srcCG)
     let targetW: CGFloat = 224
     let sx = targetW / CGFloat(srcCG.width)
     let sy = targetW / CGFloat(srcCG.height)
     let scaled = ciIn.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
 
-    // 轉灰階（saturation 0）
-    let gray = scaled.applyingFilter(
-        "CIColorControls",
-        parameters: [kCIInputSaturationKey: 0]
-    )
+    let gray = scaled.applyingFilter("CIColorControls",
+                                     parameters: [kCIInputSaturationKey: 0])
 
-    // 3x3 Laplacian filter：[-1 -1 -1; -1 8 -1; -1 -1 -1]
+    let blurred = gray.applyingFilter("CIGaussianBlur",
+                                      parameters: [kCIInputRadiusKey: 0.8])
+    let inputForEdge = blurred
+
     let weights: [CGFloat] = [-1, -1, -1,
                               -1,  8, -1,
                               -1, -1, -1]
@@ -44,14 +147,104 @@ private func laplacianVarianceScore(_ image: UIImage) -> Float? {
         let convolved = CIFilter(
             name: "CIConvolution3X3",
             parameters: [
-                kCIInputImageKey: gray,
+                kCIInputImageKey: inputForEdge,
+                "inputWeights": CIVector(values: weights, count: 9),
+                "inputBias": 0
+            ]
+        )?.outputImage
+    else { return false }
+
+    let rect = CGRect(x: 0, y: 0,
+                      width: Int(max(1, round(targetW))),
+                      height: Int(max(1, round(targetW))))
+    guard let outCG = sharedCIContext.createCGImage(convolved, from: rect) else { return false }
+
+    let width = outCG.width
+    let height = outCG.height
+    let bytesPerPixel = 4
+    let bytesPerRow = width * bytesPerPixel
+    var buffer = [UInt8](repeating: 0, count: Int(bytesPerRow * height))
+
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    guard let ctx = CGContext(
+        data: &buffer,
+        width: width, height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: bytesPerRow,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else { return false }
+
+    ctx.draw(outCG, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+    // 轉為 Float 陣列（取 R 通道；灰階狀況 R=G=B）
+    let count = width * height
+    var samples = [Float](repeating: 0, count: count)
+    var s = 0
+    for i in stride(from: 0, to: buffer.count, by: 4) {
+        samples[s] = Float(buffer[i])
+        s += 1
+    }
+
+    // 1) 變異數
+    var mean: Float = 0, meanSquares: Float = 0
+    vDSP_meanv(samples, 1, &mean, vDSP_Length(samples.count))
+    vDSP_measqv(samples, 1, &meanSquares, vDSP_Length(samples.count))
+    let variance = max(0, meanSquares - mean * mean)
+
+    // 2) 銳利比例（|Laplacian| > edgeThreshold 的像素比）
+    //    注意：因為我們把卷積結果轉成 8-bit，負值會被夾到 0。
+    //    在這種情況下，直接用「> edgeThreshold」即可，不用取絕對值。
+    var sharpCount = 0
+    for v in samples where v > edgeThreshold { sharpCount += 1 }
+    let sharpRatio = Float(sharpCount) / Float(max(1, count))
+
+    // === 決策：只要超過一半區域是清晰，就不當模糊 ===
+    let looksSharpByArea = sharpRatio >= minSharpRatio
+    let looksBlurryByVariance = variance < varianceThreshold
+
+    // 視為模糊 = 區域不夠清晰 且 變異數也低
+    return (!looksSharpByArea) && looksBlurryByVariance
+}
+
+
+/// 回傳 Laplacian 影像像素的變異數：越大越清晰、越小越模糊
+private func laplacianVarianceScore(_ image: UIImage) -> Float? {
+    guard let srcCG = image.cgImage else { return nil }
+
+    // 1) 縮小
+    let ciIn = CIImage(cgImage: srcCG)
+    let targetW: CGFloat = 224
+    let sx = targetW / CGFloat(srcCG.width)
+    let sy = targetW / CGFloat(srcCG.height)
+    let scaled = ciIn.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+
+    // 2) 轉灰階
+    let gray = scaled.applyingFilter("CIColorControls",
+                                     parameters: [kCIInputSaturationKey: 0])
+
+    // 3) 先做一點 Gaussian Blur 來降噪（重點在這裡）
+    //    半徑 0.8~1.2 都可以，越大越嚴格（更容易判定為模糊）
+    let blurred = gray.applyingFilter("CIGaussianBlur",
+                                      parameters: [kCIInputRadiusKey: 0.8])
+    let inputForEdge = blurred
+
+    // 4) Laplacian 卷積
+    let weights: [CGFloat] = [-1, -1, -1,
+                              -1,  8, -1,
+                              -1, -1, -1]
+    guard
+        let convolved = CIFilter(
+            name: "CIConvolution3X3",
+            parameters: [
+                kCIInputImageKey: inputForEdge,  // ← 用降噪後的影像
                 "inputWeights": CIVector(values: weights, count: 9),
                 "inputBias": 0
             ]
         )?.outputImage
     else { return nil }
 
-    // 產生小圖（RGBA8），再抓紅通道值即可（灰階情境下 R=G=B）
+    // 5) 轉成 RGBA8 小圖以取得像素
     let rect = CGRect(x: 0, y: 0,
                       width: Int(max(1, round(targetW))),
                       height: Int(max(1, round(targetW))))
@@ -78,21 +271,20 @@ private func laplacianVarianceScore(_ image: UIImage) -> Float? {
 
     ctx.draw(outCG, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-    // 取紅通道（每 4 bytes：R G B A）
+    // 6) 只取 R 通道（灰階時 R=G=B）
     var samples = [Float](repeating: 0, count: width * height)
     var s = 0
     for i in stride(from: 0, to: buffer.count, by: 4) {
-        samples[s] = Float(buffer[i])   // R
+        samples[s] = Float(buffer[i])
         s += 1
     }
 
-    // variance = E[x^2] - (E[x])^2
+    // 7) 變異數
     var mean: Float = 0
     var meanSquares: Float = 0
     vDSP_meanv(samples, 1, &mean, vDSP_Length(samples.count))
     vDSP_measqv(samples, 1, &meanSquares, vDSP_Length(samples.count))
-    let variance = max(0, meanSquares - mean * mean)
-    return variance
+    return max(0, meanSquares - mean * mean)
 }
 
 
@@ -104,13 +296,17 @@ struct BlurryScanResult: Codable {
 }
 
 // 一個簡單的模糊分數門檻（越小越模糊），可自行微調
-private let BLUR_VARIANCE_THRESHOLD: Float = 120.0
+private let BLUR_VARIANCE_THRESHOLD: Float = 70.0
 
+// 把原本的 ActiveAlert 換成這個
 enum ActiveAlert: Identifiable {
     case overLimit(String)
-    case finished(Int)
+    case finished(dup: Int, blurry: Int)
     var id: String {
-        switch self { case .overLimit: return "overLimit"; case .finished: return "finished" }
+        switch self {
+        case .overLimit: return "overLimit"
+        case .finished:  return "finished"
+        }
     }
 }
 
@@ -221,7 +417,7 @@ struct ResultRowView: View, Equatable {
                         BlurryImagesEntryView(category: category, blurryResult: blur)
                     } label: {
                         HStack(spacing: 6) {
-                            Image(systemName: "eye.trianglebadge.exclamationmark")
+                            
                             Text(String(format: NSLocalizedString("btn_view_blurry_count", comment: ""), blur.blurryIndices.count))
                         }
                         .font(.caption)
@@ -414,8 +610,8 @@ extension ContentView {
                 VStack(spacing: 4) {
                     ProgressView(value: Double(selectedProcessed), total: Double(max(selectedTotal, 1)))
                         .accentColor(.blue)
-                    Text(String(format: NSLocalizedString("progress_total", comment: ""), selectedProcessed, selectedTotal))
-                        .font(.footnote).foregroundColor(.secondary)
+                    //Text(String(format: NSLocalizedString("progress_total", comment: ""), selectedProcessed, selectedTotal))
+                    //    .font(.footnote).foregroundColor(.secondary)
                 }
                 .padding(.vertical, 4)
                 .padding(.horizontal)
@@ -609,15 +805,21 @@ struct ContentView: View {
             .alert(item: $activeAlert) { a in
                 switch a {
                 case .overLimit(let msg):
-                    return Alert(title: Text("alert_over_limit_title"), message: Text(msg), dismissButton: .default(Text("ok")))
-                case .finished(let n):
                     return Alert(
-                        title: Text(NSLocalizedString("alert_finish_title", comment: "")),
-                        message: Text(String(format: NSLocalizedString("alert_finish_msg", comment: ""), n)),
-                        dismissButton: .default(Text(NSLocalizedString("ok", comment: "")))
+                        title: Text("alert_over_limit_title"),
+                        message: Text(msg),
+                        dismissButton: .default(Text("ok"))
+                    )
+                case .finished(let dup, let blurry):
+                    // 這裡的文案會用 Localizable.strings（下段提供）
+                    return Alert(
+                        title: Text("alert_scan_done_title"),
+                        message: Text(String(format: NSLocalizedString("alert_scan_done_message", comment: ""), dup, blurry)),
+                        dismissButton: .default(Text("ok"))
                     )
                 }
             }
+
             .onAppear {
                 Task {
                     let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
@@ -831,12 +1033,15 @@ struct ContentView: View {
     // MARK: - 掃描主流程（修正 scope 與模糊偵測位置）
 
     func startScanMultiple(selected: [PhotoCategory], selectedChunks: [PhotoCategory: Int]) {
+        var sessionDuplicatesFound = 0
+        var sessionBlurryFound = 0   // ← 新增：整次掃描累計模糊張數
+
         guard !selected.isEmpty else { return }
         isProcessing = true
 
         Task {
             await MainActor.run { selected.forEach { processedCounts[$0] = 0 } }
-            var sessionDuplicatesFound = 0
+            
 
             for cat in selected {
                 let chunks = categoryAssetChunks[cat] ?? []
@@ -870,12 +1075,21 @@ struct ContentView: View {
                     let images = pairs.map(\.image)
 
                     // 模糊偵測：在取得 images 之後
-                    //for (localIdx, img) in images.enumerated() {
-                    //    if let score = laplacianVarianceScore(img), score < BLUR_VARIANCE_THRESHOLD {
-                    //        let globalIdx = chunkStart + localIdx
-                    //        allBlurryGlobalIndices.append(globalIdx)
-                    //    }
-                    //}
+                    for (localIdx, img) in images.enumerated() {
+                        if isBlurryAdaptiveCenterWeighted(
+                            img,
+                            varianceThreshold: 30,     // 60~90 看你要多嚴
+                            kStd: 0.5,                 // 0.8~1.5：越大越嚴格
+                            minSharpRatioGlobal: 0.08, // 全圖 12% 有明顯邊緣就不當模糊
+                            minSharpRatioCenter: 0.13, // 中央 25% 有明顯邊緣就不當模糊
+                            gaussianRadius: 0.4
+                        ) {
+                            let globalIdx = chunkStart + localIdx
+                            allBlurryGlobalIndices.append(globalIdx)
+                        }
+
+                    }
+
 
                     let embs = await batchExtractEmbeddingsChunked(images: images)
                     let allEmbs = prevTailEmbs + embs
@@ -930,14 +1144,16 @@ struct ContentView: View {
                         lastGroups: allGroups,
                         assetIds: allAssetIds
                     )
-                    // 存模糊結果（一次即可）
+                    // 存模糊結果
+                    let uniqueBlurry = Array(Set(allBlurryGlobalIndices)).sorted()
                     blurryResults[cat] = BlurryScanResult(
                         date: Date(),
                         assetIds: globalIds,
-                        blurryIndices: Array(Set(allBlurryGlobalIndices)).sorted()
+                        blurryIndices: uniqueBlurry
                     )
                     saveScanResultsToLocal()
                     sessionDuplicatesFound += allGroups.flatMap { $0 }.count
+                    sessionBlurryFound += uniqueBlurry.count              // ← 加總到本次
                 }
 
                 let signature = makeSignature(for: uniqueAssets)
@@ -963,7 +1179,7 @@ struct ContentView: View {
             await MainActor.run {
                 isProcessing = false
                 totalDuplicatesFound = sessionDuplicatesFound
-                activeAlert = .finished(sessionDuplicatesFound)
+                activeAlert = .finished(dup: sessionDuplicatesFound, blurry: sessionBlurryFound)
             }
         }
     }

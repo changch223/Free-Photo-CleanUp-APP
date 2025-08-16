@@ -60,7 +60,7 @@ struct SimilarImagesEntryView: View {
                 .padding(.top, 40)
             }
         }
-        .navigationTitle(String(format: NSLocalizedString("nav_title_view_category", comment: ""), category.localizedName))
+        .navigationTitle(String(format: NSLocalizedString("nav_title_blurry_group", comment: ""), category.localizedName))
         .task { await loadDetailOrFallback() }
     }
 

@@ -4,6 +4,8 @@
 //
 //  Created by chang chiawei on 2025-08-04.
 //
+"btn_view_blurry_count" = "%d 張模糊照片";
+
 "category_photo" = "照片";
 "category_selfie" = "自拍";
 "category_portrait" = "人像";
@@ -61,3 +63,12 @@
 "btn_cancel" = "取消";
 "btn_done" = "完成";
 "review_progress" = "%@/%@";
+
+"alert_scan_done_title" = "掃描完成";
+"alert_scan_done_message" = "共找到 %d 張重複照片，以及 %d 張模糊照片。";
+"ok" = "確定";
+"btn_review_blurry" = "查看模糊照片";
+
+"label_similar_photos" = "Similar photos"; // 依你需求保留英文原樣
+"label_blurry_photos"  = "模糊照片";
+"nav_title_blurry_group" = "模糊照片";

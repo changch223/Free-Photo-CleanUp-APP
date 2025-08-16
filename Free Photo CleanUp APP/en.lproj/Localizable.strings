@@ -4,6 +4,7 @@
 //
 //  Created by chang chiawei on 2025-08-04.
 //
+"btn_view_blurry_count" = "%d blurry photos";
 
 "category_photo" = "Photo";
 "category_selfie" = "Selfie";
@@ -62,3 +63,12 @@
 "btn_cancel" = "Cancel";
 "btn_done" = "Done";
 "review_progress" = "%@/%@";
+
+"alert_scan_done_title" = "Scan Complete";
+"alert_scan_done_message" = "Found %d duplicates and %d blurry photos.";
+"ok" = "OK";
+"btn_review_blurry" = "Review blurry";
+
+"label_similar_photos" = "Similar photos";
+"label_blurry_photos"  = "Blurry photos";
+"nav_title_blurry_group" = "Blurry photos";
