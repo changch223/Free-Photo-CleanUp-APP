@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Photos
+import UIKit
 
 /// 進入「查看」時的啟動器：先讀磁碟 detail，再轉去 SimilarImagesView
 struct SimilarImagesEntryView: View {
@@ -30,17 +31,21 @@ struct SimilarImagesEntryView: View {
                     }
                 }
             } else if !assetIds.isEmpty {
-                SimilarImagesView(similarPairs: pairs, assetIds: assetIds)
-                    .overlay(alignment: .topTrailing) {
-                        if warningStale {
-                            Text("stale_data_warning")
-                                .font(.caption2).bold()
-                                .padding(6)
-                                .background(.ultraThinMaterial)
-                                .cornerRadius(8)
-                                .padding(8)
-                        }
+                // 沿用相似群組的檢視（預設模式：每組第一張勾選）
+                SimilarImagesView(
+                    similarPairs: pairs,
+                    assetIds: assetIds
+                )
+                .overlay(alignment: .topTrailing) {
+                    if warningStale {
+                        Text("stale_data_warning")
+                            .font(.caption2).bold()
+                            .padding(6)
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(8)
+                            .padding(8)
                     }
+                }
             } else {
                 VStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle")
@@ -59,14 +64,11 @@ struct SimilarImagesEntryView: View {
         .task { await loadDetailOrFallback() }
     }
 
-
-    
     /// 讀 detail 檔；若無則退回 inline 結果
     private func loadDetailOrFallback() async {
         // 先嘗試讀取磁碟
         if let detail = loadDetail(for: category) {
-            // （可選）對比現在簽章，若不同可標示 warning
-            // 若你要快速檢查，可在此呼叫 currentSignature(for:)
+            // 可選：與目前資料簽章比對，設 warning
             // let nowSig = await currentSignature(for: category)
             // warningStale = (nowSig != detail.librarySignature)
 
@@ -88,10 +90,32 @@ struct SimilarImagesEntryView: View {
     }
 }
 
-
+/// 可同時支援：
+/// 1) 相似照片群組（使用 similarPairs）
+/// 2) 自訂群組（customGroups，例：模糊照片每張是一組）
+/// 並可指定預設勾選模式（defaultKeepMode：.first / .none）
 struct SimilarImagesView: View {
     let similarPairs: [(Int, Int)]
     let assetIds: [String]
+
+    /// 若提供，將覆蓋相似群組；用於「模糊照片每張單獨一組」等情境
+    let customGroups: [[Int]]?
+    /// 預設勾選策略：.first（每組預設勾第一張）、.none（全部不勾）
+    enum DefaultKeepMode { case first, none }
+    let defaultKeepMode: DefaultKeepMode
+
+    /// 與既有呼叫相容的便利 init（提供預設值）
+    init(
+        similarPairs: [(Int, Int)],
+        assetIds: [String],
+        customGroups: [[Int]]? = nil,
+        defaultKeepMode: DefaultKeepMode = .first
+    ) {
+        self.similarPairs = similarPairs
+        self.assetIds = assetIds
+        self.customGroups = customGroups
+        self.defaultKeepMode = defaultKeepMode
+    }
 
     static var imageCache = NSCache<NSString, UIImage>()
 
@@ -101,12 +125,13 @@ struct SimilarImagesView: View {
     @State private var deleteError: String?
     @State private var reviewingGroupIndex: Int? = nil
 
-    // 新增：記錄所有已刪除的 global index
+    // 記錄所有已刪除的 global index
     @State private var deletedIndices: Set<Int> = []
 
-    // 只顯示未被刪除的 group
+    // 只顯示未被刪除的 group（群組來源：customGroups ?? groupSimilarImages）
     var grouped: [[Int]] {
-        groupSimilarImages(pairs: similarPairs)
+        let baseGroups = customGroups ?? groupSimilarImages(pairs: similarPairs)
+        return baseGroups
             .map { $0.filter { !deletedIndices.contains($0) } }
             .filter { !$0.isEmpty }
     }
@@ -120,16 +145,6 @@ struct SimilarImagesView: View {
         }
     }
 
-    private func showInterstitialAfterCoverDismissed() {
-        // 等動畫/層級穩定
-        //DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-            //let vc = UIApplication.shared.topMostVisibleViewController()
-            //InterstitialAdManager.shared.showIfReady(from: vc, completion: nil)
-        //}
-    }
-
-
-    
     var body: some View {
         ZStack(alignment: .bottom) {
             ScrollView {
@@ -178,10 +193,10 @@ struct SimilarImagesView: View {
                     }
                 }
                 .padding(.top)
-                .padding(.bottom, 8) // 原來 60 → 8，因為我們用 safeAreaInset 了
+                .padding(.bottom, 8)
             }
         }
-        // 把底部工具列 + Banner 合併成一個 inset（這樣全頁就只有一條固定 Banner）
+        // 把底部工具列 + Banner 合併成一個 inset
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 HStack {
@@ -211,9 +226,16 @@ struct SimilarImagesView: View {
         }
         .navigationTitle("nav_title_similar_group")
         .onAppear {
+            // 依預設模式建立初始勾選
             var initial: [Int: Set<Int>] = [:]
-            for (i, group) in groupSimilarImages(pairs: similarPairs).enumerated() {
-                if let first = group.first { initial[i] = [first] }
+            let baseGroups = customGroups ?? groupSimilarImages(pairs: similarPairs)
+            for (i, group) in baseGroups.enumerated() {
+                switch defaultKeepMode {
+                case .first:
+                    if let first = group.first { initial[i] = [first] }
+                case .none:
+                    initial[i] = [] // 全不勾選
+                }
             }
             selectedKeep = initial
             Task.detached { await pickAllFavoritesAsDefaultKeep() }
@@ -244,21 +266,19 @@ struct SimilarImagesView: View {
                 onFinish: { keptGlobals in
                     selectedKeep[gIdx] = keptGlobals
                     reviewingGroupIndex = nil
-                    //showInterstitialAfterCoverDismissed()
                 },
                 onCancel: {
                     reviewingGroupIndex = nil
-                    //showInterstitialAfterCoverDismissed()
                 }
             )
         }
     }
 
-
     // 只要是最愛都加到保留（全 group 內檢查）
     private func pickAllFavoritesAsDefaultKeep() async {
+        let baseGroups = customGroups ?? groupSimilarImages(pairs: similarPairs)
         await withTaskGroup(of: (Int, Set<Int>).self) { group in
-            for (gIdx, members) in groupSimilarImages(pairs: similarPairs).enumerated() {
+            for (gIdx, members) in baseGroups.enumerated() {
                 group.addTask {
                     var favoriteIndices: Set<Int> = []
                     for idx in members {
@@ -281,7 +301,7 @@ struct SimilarImagesView: View {
         }
     }
 
-    // 新增：用 deletedIndices 馬上讓被刪除照片消失
+    // 用 deletedIndices 馬上讓被刪除照片消失
     private func performDelete() {
         let idsToDelete: [String] = allDeleteIndices.compactMap { assetIds[safe: $0] }
         let indicesToDelete = Set(allDeleteIndices)
@@ -297,9 +317,9 @@ struct SimilarImagesView: View {
                     self.deleteError = error.localizedDescription
                     return
                 }
-                // 1. 刪除成功，直接記錄下已刪除 index，所有 UI 自動消失
+                // 1) 刪除成功：記錄下已刪除 index，UI 自動消失
                 self.deletedIndices.formUnion(indicesToDelete)
-                // 2. selectedKeep 也要移除這些 index，避免資料殘留
+                // 2) selectedKeep 也要移除這些 index，避免資料殘留
                 var newSelectedKeep = self.selectedKeep
                 for gIdx in newSelectedKeep.keys {
                     newSelectedKeep[gIdx]?.subtract(indicesToDelete)
@@ -366,7 +386,7 @@ struct ThumbnailView: View {
         }
     }
 
-    func loadThumbnail() {
+    private func loadThumbnail() {
         guard !assetID.isEmpty else { return }
         let fr = PHAsset.fetchAssets(withLocalIdentifiers: [assetID], options: nil)
         guard let asset = fr.firstObject else { return }
@@ -384,14 +404,14 @@ struct ThumbnailView: View {
             }
         }
     }
-    func fetchFavoriteStatus() {
+
+    private func fetchFavoriteStatus() {
         guard !assetID.isEmpty else { return }
         let fr = PHAsset.fetchAssets(withLocalIdentifiers: [assetID], options: nil)
         guard let asset = fr.firstObject else { return }
         self.isFavorite = asset.isFavorite
     }
 }
-
 
 // MARK: - 交友app式進階篩選＋反饋
 struct AdvancedReviewViewSwipe: View {
@@ -513,7 +533,7 @@ struct AdvancedReviewViewSwipe: View {
                     HStack(spacing: 16) {
                         Button {
                             withAnimation {
-                                feedbackText = "action_deleted"
+                                feedbackText = NSLocalizedString("action_deleted", comment: "")
                                 feedbackColor = .red
                                 feedbackOpacity = 1
                             }
@@ -533,7 +553,7 @@ struct AdvancedReviewViewSwipe: View {
 
                         Button {
                             withAnimation {
-                                feedbackText = "action_kept"
+                                feedbackText = NSLocalizedString("action_kept", comment: "")
                                 feedbackColor = .green
                                 feedbackOpacity = 1
                             }
@@ -583,6 +603,7 @@ struct AdvancedReviewViewSwipe: View {
         }
         .background(Color.black.ignoresSafeArea())
     }
+
     private func goNextWithFeedback() {
         withAnimation { feedbackOpacity = 1 }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
@@ -599,8 +620,6 @@ struct AdvancedReviewViewSwipe: View {
         }
     }
 
-
-
     private func loadFavoriteStatus() {
         guard assetIDs.indices.contains(currentIndex) else { isFavorite = false; return }
         let id = assetIDs[currentIndex]
@@ -609,7 +628,6 @@ struct AdvancedReviewViewSwipe: View {
         isFavorite = asset.isFavorite
     }
 }
-
 
 // --- ZoomableImageView/圖像載入與縮放 ---
 struct ZoomableImageView: View {
@@ -639,6 +657,7 @@ struct ZoomableImageView: View {
         .onAppear { loadLarge() }
         .onDisappear { scale = 1.0 }
     }
+
     private func loadLarge() {
         let key = "\(assetID)#large" as NSString
         if let cached = SimilarImagesView.imageCache.object(forKey: key) {

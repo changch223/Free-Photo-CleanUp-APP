@@ -6,7 +6,105 @@
 import SwiftUI
 import Photos
 import UIKit
+import Accelerate // vImage / vDSP
+import CoreImage   // ← 新增
 
+// 可重用的 CIContext（關掉 color space 以避免額外轉換）
+private let sharedCIContext: CIContext = {
+    let opts: [CIContextOption: Any] = [
+        .workingColorSpace: NSNull(),
+        .outputColorSpace:  NSNull()
+    ]
+    return CIContext(options: opts)
+}()
+
+
+/// 回傳 Laplacian 影像像素的變異數：越大越清晰、越小越模糊
+private func laplacianVarianceScore(_ image: UIImage) -> Float? {
+    guard let srcCG = image.cgImage else { return nil }
+
+    // 建 CIImage，縮到較小尺寸以加快運算（224 與你的 embedding 尺寸一致）
+    let ciIn = CIImage(cgImage: srcCG)
+    let targetW: CGFloat = 224
+    let sx = targetW / CGFloat(srcCG.width)
+    let sy = targetW / CGFloat(srcCG.height)
+    let scaled = ciIn.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+
+    // 轉灰階（saturation 0）
+    let gray = scaled.applyingFilter(
+        "CIColorControls",
+        parameters: [kCIInputSaturationKey: 0]
+    )
+
+    // 3x3 Laplacian filter：[-1 -1 -1; -1 8 -1; -1 -1 -1]
+    let weights: [CGFloat] = [-1, -1, -1,
+                              -1,  8, -1,
+                              -1, -1, -1]
+    guard
+        let convolved = CIFilter(
+            name: "CIConvolution3X3",
+            parameters: [
+                kCIInputImageKey: gray,
+                "inputWeights": CIVector(values: weights, count: 9),
+                "inputBias": 0
+            ]
+        )?.outputImage
+    else { return nil }
+
+    // 產生小圖（RGBA8），再抓紅通道值即可（灰階情境下 R=G=B）
+    let rect = CGRect(x: 0, y: 0,
+                      width: Int(max(1, round(targetW))),
+                      height: Int(max(1, round(targetW))))
+    guard let outCG = sharedCIContext.createCGImage(convolved, from: rect) else { return nil }
+
+    let width = outCG.width
+    let height = outCG.height
+    let bytesPerPixel = 4
+    let bytesPerRow = width * bytesPerPixel
+    var buffer = [UInt8](repeating: 0, count: Int(bytesPerRow * height))
+
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    guard
+        let ctx = CGContext(
+            data: &buffer,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )
+    else { return nil }
+
+    ctx.draw(outCG, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+    // 取紅通道（每 4 bytes：R G B A）
+    var samples = [Float](repeating: 0, count: width * height)
+    var s = 0
+    for i in stride(from: 0, to: buffer.count, by: 4) {
+        samples[s] = Float(buffer[i])   // R
+        s += 1
+    }
+
+    // variance = E[x^2] - (E[x])^2
+    var mean: Float = 0
+    var meanSquares: Float = 0
+    vDSP_meanv(samples, 1, &mean, vDSP_Length(samples.count))
+    vDSP_measqv(samples, 1, &meanSquares, vDSP_Length(samples.count))
+    let variance = max(0, meanSquares - mean * mean)
+    return variance
+}
+
+
+// 掃描出的「模糊」結果
+struct BlurryScanResult: Codable {
+    var date: Date
+    var assetIds: [String]      // 與當次掃描使用的順序一致
+    var blurryIndices: [Int]    // 以 assetIds 的全域索引為準
+}
+
+// 一個簡單的模糊分數門檻（越小越模糊），可自行微調
+private let BLUR_VARIANCE_THRESHOLD: Float = 120.0
 
 enum ActiveAlert: Identifiable {
     case overLimit(String)
@@ -19,9 +117,7 @@ enum ActiveAlert: Identifiable {
 struct PersistedScanSummary: Codable {
     var date: Date
     var duplicateCount: Int
-    // 如果需要在「查看」頁快速啟動，僅保存「每組重複的 asset local IDs」，
-    // 而不是全量的 assetIds。大幅縮小資料量。
-    var duplicateGroupsByAssetIDs: [[String]]? // 可選：若太大，也可不存，點查看時再載
+    var duplicateGroupsByAssetIDs: [[String]]?
 }
 
 struct OverLimitAlert: Identifiable {
@@ -29,6 +125,7 @@ struct OverLimitAlert: Identifiable {
     let message: String
 }
 
+// MARK: - Row
 
 struct ResultRowView: View, Equatable {
     let category: PhotoCategory
@@ -36,14 +133,16 @@ struct ResultRowView: View, Equatable {
     let processed: Int
     let countsLoading: Bool
     let result: ScanResult?
-    @State private var goDetail = false
+    let blurry: BlurryScanResult?     // ← 由呼叫端傳入，而不是直接用外層字典
 
+    @State private var goDetail = false
 
     static func == (lhs: ResultRowView, rhs: ResultRowView) -> Bool {
         lhs.category == rhs.category &&
         lhs.total == rhs.total &&
         lhs.processed == rhs.processed &&
-        lhs.result?.duplicateCount == rhs.result?.duplicateCount
+        lhs.result?.duplicateCount == rhs.result?.duplicateCount &&
+        (lhs.blurry?.blurryIndices.count ?? 0) == (rhs.blurry?.blurryIndices.count ?? 0)
     }
 
     var body: some View {
@@ -85,17 +184,15 @@ struct ResultRowView: View, Equatable {
                     .foregroundColor(.red)
                     .font(.system(size: 14))
 
-                // A. 隱藏的 NavigationLink 由狀態觸發
-                NavigationLink(destination:
-                    SimilarImagesEntryView(category: category, inlineResult: result),
+                NavigationLink(
+                    destination: SimilarImagesEntryView(category: category, inlineResult: result),
                     isActive: $goDetail
                 ) { EmptyView() }.frame(width: 0, height: 0).hidden()
 
-                // B. 顯示給使用者點的按鈕：先插頁，後導頁
                 Button {
                     if let vc = UIApplication.shared.topMostVisibleViewController() {
-                            //InterstitialAdManager.shared.showIfReady(from: vc){
-                            goDetail = true
+                        //InterstitialAdManager.shared.showIfReady(from: vc) {
+                        goDetail = true
                         //}
                     } else {
                         goDetail = true
@@ -108,11 +205,33 @@ struct ResultRowView: View, Equatable {
                         .background(Color.blue.opacity(0.13))
                         .cornerRadius(10)
                 }
-                
+
             } else {
                 Text("result_no_duplicate")
                     .foregroundColor(.secondary)
                     .font(.system(size: 14))
+            }
+
+            // 顯示「模糊」捷徑
+            if let blur = blurry, !blur.blurryIndices.isEmpty {
+                HStack {
+                    Spacer()
+                    NavigationLink {
+                        // 你專案若已有 BlurryImagesEntryView，這裡直接用；若沒有，可換成 SimilarImagesView + custom groups
+                        BlurryImagesEntryView(category: category, blurryResult: blur)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "eye.trianglebadge.exclamationmark")
+                            Text(String(format: NSLocalizedString("btn_view_blurry_count", comment: ""), blur.blurryIndices.count))
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.orange.opacity(0.15))
+                        .cornerRadius(8)
+                    }
+                }
+                .padding(.trailing, 8)
             }
         }
         .padding(10)
@@ -123,7 +242,7 @@ struct ResultRowView: View, Equatable {
     }
 }
 
-
+// MARK: - Common
 
 struct LazyView<Content: View>: View {
     let build: () -> Content
@@ -137,7 +256,6 @@ func summariesURL() -> URL {
     return dir.appendingPathComponent("scan_results_v2.json")
 }
 
-
 enum PhotoCategory: String, CaseIterable, Identifiable, Codable {
     case photo
     case selfie
@@ -146,7 +264,6 @@ enum PhotoCategory: String, CaseIterable, Identifiable, Codable {
 
     var id: String { rawValue }
 
-    // 顯示名稱多語化
     var localizedName: String {
         switch self {
         case .photo:      return NSLocalizedString("category_photo", comment: "")
@@ -157,22 +274,22 @@ enum PhotoCategory: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-
 struct ScanResult: Codable {
     var date: Date
     var duplicateCount: Int
     var lastGroups: [[Int]]
-    var assetIds: [String] // 新增！掃描時的asset順序
+    var assetIds: [String]
 }
 
+// MARK: - ContentView (UI pieces)
+
 extension ContentView {
-    // 頁首：主題icon + 標題
     var headerView: some View {
         VStack(spacing: 1) {
             Image(systemName: "photo.on.rectangle.angled")
                 .font(.system(size: 50))
                 .foregroundColor(.blue)
-                
+
             Text("app_title")
                 .font(.largeTitle).bold()
                 .foregroundColor(.primary)
@@ -183,14 +300,11 @@ extension ContentView {
                 .padding(.horizontal, 40)
         }
     }
-    
-    // 分類選擇
+
     var categorySelectionView: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("category_select_title")
-                .font(.headline)
-            Text("category_limit_hint")
-                .font(.subheadline)
+            Text("category_select_title").font(.headline)
+            Text("category_limit_hint").font(.subheadline)
             ForEach(PhotoCategory.allCases, id: \.self) { category in
                 let chunks = categoryAssetChunks[category] ?? []
                 let chunkCountAll = chunks.count
@@ -198,11 +312,8 @@ extension ContentView {
                 let displayCount = chunkCount(for: category, idx: selectedIdx)
 
                 HStack(spacing: 10) {
-                    // 勾選框
                     Button {
-                        if !isProcessing {
-                            tryToggle(category)
-                        }
+                        if !isProcessing { tryToggle(category) }
                     } label: {
                         Image(systemName: selectedCategories.contains(category) ? "checkmark.square.fill" : "square")
                             .font(.title3)
@@ -211,17 +322,13 @@ extension ContentView {
                     .buttonStyle(.plain)
                     .disabled(isProcessing)
 
-                    // 分類名稱 + 該組張數
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(category.localizedName)
-                            .font(.system(size: 16, weight: .semibold))
+                        Text(category.localizedName).font(.system(size: 16, weight: .semibold))
                         Text(String(format: NSLocalizedString("chunk_title_count", comment: ""), selectedIdx + 1, displayCount))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                            .font(.caption).foregroundColor(.secondary)
                     }
                     Spacer()
 
-                    // 分組下拉（有多組才顯示）
                     if chunkCountAll > 1 {
                         Menu {
                             ForEach(0..<chunkCountAll, id: \.self) { i in
@@ -257,34 +364,22 @@ extension ContentView {
                 .background(selectedCategories.contains(category) ? Color.blue.opacity(0.08) : Color.clear)
                 .cornerRadius(12)
                 .opacity(isProcessing ? 0.6 : 1)
-
             }
         }
         .padding(.top, 10)
     }
 
-
-
-    
-    // 按鈕
     var actionButtonsView: some View {
         VStack(spacing: 15) {
-            
-    
-            
             Button(action: {
-                // 先快照目前的選擇
                 let selectedSnapshot = Array(selectedCategories)
                 let chunkSnapshot = selectedCategoryChunks
-                
                 runAfterInterstitial {
-                    // 保險起見仍在主執行緒
                     DispatchQueue.main.async {
                         startScanMultiple(selected: selectedSnapshot, selectedChunks: chunkSnapshot)
                     }
                 }
             }) {
-                // 原本的 label 一樣
                 HStack {
                     Image(systemName: "wand.and.stars")
                     Text("btn_scan_selected")
@@ -306,9 +401,8 @@ extension ContentView {
         }
         .padding(.vertical)
     }
-    
+
     var globalProgressView: some View {
-        // 每個選取分類取目前所選 chunk 的數量
         let selectedTotal = selectedCategories.reduce(0) { acc, cat in
             let idx = selectedCategoryChunks[cat] ?? 0
             let count = categoryAssetChunks[cat]?[safe: idx]?.count ?? 0
@@ -321,9 +415,7 @@ extension ContentView {
                     ProgressView(value: Double(selectedProcessed), total: Double(max(selectedTotal, 1)))
                         .accentColor(.blue)
                     Text(String(format: NSLocalizedString("progress_total", comment: ""), selectedProcessed, selectedTotal))
-
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
+                        .font(.footnote).foregroundColor(.secondary)
                 }
                 .padding(.vertical, 4)
                 .padding(.horizontal)
@@ -331,8 +423,6 @@ extension ContentView {
         }
     }
 
-    
-    // 掃描結果
     var scanResultsView: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("result_title")
@@ -340,14 +430,13 @@ extension ContentView {
                 .padding(.leading, 4)
             ForEach(PhotoCategory.allCases, id: \.self) { category in
                 let result = scanResults[category]
-                let pairs = result != nil ? pairsFromGroups(result!.lastGroups) : []
                 ResultRowView(
                     category: category,
                     total: photoVM.categoryCounts[category] ?? 0,
                     processed: processedCounts[category] ?? 0,
                     countsLoading: photoVM.countsLoading,
                     result: result,
-                    //similarPairs: pairs
+                    blurry: blurryResults[category] // ← 正確傳入
                 )
             }
         }
@@ -364,49 +453,49 @@ extension View {
     }
 }
 
+// MARK: - ContentView
+
 struct ContentView: View {
-    // 狀態
-    @State private var categoryCounts: [PhotoCategory: Int] = [:]  // 總數
-    @State private var processedCounts: [PhotoCategory: Int] = [:] // 已掃描數
+    @State private var blurryResults: [PhotoCategory: BlurryScanResult] = [:]
+
+    @State private var categoryCounts: [PhotoCategory: Int] = [:]
+    @State private var processedCounts: [PhotoCategory: Int] = [:]
     @State private var scanResults: [PhotoCategory: ScanResult] = [:]
     @State private var isProcessing = false
     @State private var processingIndex = 0
     @State private var processingTotal = 0
     @State private var showFinishAlert = false
     @State private var totalDuplicatesFound = 0
-    @State private var countsLoading = true   // 是否仍在計算各分類總數
+    @State private var countsLoading = true
     @StateObject private var photoVM = PhotoLibraryViewModel()
     @State private var selectedCategories: Set<PhotoCategory> = []
 
-    // 你已有：分類→分組（每組<=1000）
     @State private var categoryAssetChunks: [PhotoCategory: [[PHAsset]]] = [:]
-    // 你已有：分類→目前選到第幾組（>1000 時才有意義）
     @State private var selectedCategoryChunks: [PhotoCategory: Int] = [:]
 
     @State private var overLimitAlert: OverLimitAlert? = nil
     @State private var activeAlert: ActiveAlert?
-    
+
     // MARK: - Helper: 背景同步載圖，保證只回呼一次
     func requestImageSync(_ asset: PHAsset,
                           target: CGSize,
                           mode: PHImageContentMode = .aspectFill) -> UIImage? {
         let opts = PHImageRequestOptions()
-        opts.isSynchronous = true            // 只回呼一次
+        opts.isSynchronous = true
         opts.deliveryMode = .fastFormat
         opts.resizeMode   = .fast
         opts.isNetworkAccessAllowed = false
 
         var out: UIImage?
-        PHImageManager.default().requestImage(for: asset,
-                                              targetSize: target,
-                                              contentMode: mode,
-                                              options: opts) { img, _ in
-            out = img
-        }
+        PHImageManager.default().requestImage(
+            for: asset,
+            targetSize: target,
+            contentMode: mode,
+            options: opts
+        ) { img, _ in out = img }
         return out
     }
 
-    
     // MARK: - Helpers
     private func isOverLimitCategory(_ category: PhotoCategory) -> Bool {
         (categoryAssetChunks[category]?.count ?? 0) > 1
@@ -424,33 +513,23 @@ struct ContentView: View {
         (categoryAssetChunks[category]?.flatMap { $0 }.count) ?? 0
     }
 
-    /// 回傳「此分類在目前選擇下」會掃描的張數
     private func countForCategoryInSelection(_ category: PhotoCategory) -> Int {
-        if isOverLimitCategory(category) {
-            return chunkCount(for: category, idx: selectedChunkIndex(for: category))
-        } else {
-            return totalCount(for: category)
-        }
+        isOverLimitCategory(category)
+        ? chunkCount(for: category, idx: selectedChunkIndex(for: category))
+        : totalCount(for: category)
     }
 
-    /// 計算一組選擇的合計張數（多選時用）
     private func totalCountOfSelection(_ selection: Set<PhotoCategory>) -> Int {
         selection.reduce(0) { $0 + countForCategoryInSelection($1) }
     }
 
     private func tryToggle(_ category: PhotoCategory) {
-        // 取消勾選
-        if selectedCategories.contains(category) {
-            selectedCategories.remove(category)
-            return
-        }
+        if selectedCategories.contains(category) { selectedCategories.remove(category); return }
 
         let targetIsOver = isOverLimitCategory(category)
 
-        // 若目標分類超過 1000：只能單選（自動清掉其他）
         if targetIsOver {
             if !selectedCategories.isEmpty {
-                // 這裡需要算 total
                 _ = totalCount(for: category)
                 activeAlert = .overLimit(NSLocalizedString("alert_over_limit_msg", comment: ""))
                 return
@@ -460,30 +539,24 @@ struct ContentView: View {
             return
         }
 
-        // 目標 ≤ 1000：可多選，但若目前已有「超過1000的分類」就不行
         if let over = selectedCategories.first(where: { isOverLimitCategory($0) }) {
             _ = totalCount(for: over)
             activeAlert = .overLimit(NSLocalizedString("alert_over_limit_msg", comment: ""))
             return
         }
 
-        // 檢查總合是否超過 1000
         var newSel = selectedCategories
         newSel.insert(category)
         let total = totalCountOfSelection(newSel)
         if total > 1000 {
-            print("超過1000，設置alert：")
             activeAlert = .overLimit(NSLocalizedString("alert_over_limit_msg", comment: ""))
         } else {
             selectedCategories = newSel
         }
     }
 
-
-    /// 當 >1000 類別更換組別：強制改成只選該類別
     private func didChangeChunk(for category: PhotoCategory, to newIndex: Int) {
         selectedCategoryChunks[category] = newIndex
-        // 規則：>1000 必須單選
         selectedCategories = [category]
     }
 
@@ -499,17 +572,12 @@ struct ContentView: View {
         }
     }
 
-
-
-
-    
     // --- 本地快取 key
     let scanResultsKey = "ScanResults"
-    
+
     var body: some View {
         NavigationView {
             ZStack {
-                // 主要內容 ScrollView，可捲動不跑版
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 16) {
                         headerView
@@ -520,30 +588,24 @@ struct ContentView: View {
                         globalProgressView
                         scanResultsView
                             .card()
-                        Spacer(minLength: 100) // 預留底部空間避免被按鈕遮住
+                        Spacer(minLength: 100)
                     }
                     .padding(.horizontal, 8)
                 }
-                // 底部主要操作按鈕固定，不被內容或鍵盤推擠
-                // 底部主要操作＋Banner 一起貼底
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     VStack(spacing: 0) {
-                        // 想要按鈕在上就放前面；想要 Banner 在上就顛倒順序
                         actionButtonsView
                             .padding(.horizontal)
                             .padding(.vertical, 10)
-
-                        Divider().opacity(0.15) // 可選：細分隔線
-
+                        Divider().opacity(0.15)
                         BannerAdView(adUnitID: "ca-app-pub-9275380963550837/9201898058")
                             .frame(height: 50)
                     }
-                    .background(.ultraThinMaterial) // 一層背景就好
+                    .background(.ultraThinMaterial)
                 }
             }
             .background(Color(.systemGray6))
             .navigationBarHidden(true)
-            // 所有alert全部掛在根視圖
             .alert(item: $activeAlert) { a in
                 switch a {
                 case .overLimit(let msg):
@@ -554,12 +616,10 @@ struct ContentView: View {
                         message: Text(String(format: NSLocalizedString("alert_finish_msg", comment: ""), n)),
                         dismissButton: .default(Text(NSLocalizedString("ok", comment: "")))
                     )
-                    
                 }
             }
             .onAppear {
                 Task {
-                    
                     let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
                     if status == .authorized || status == .limited {
                         await reloadAllData()
@@ -571,20 +631,17 @@ struct ContentView: View {
                         }
                     }
                     if let vc = UIApplication.shared.topMostVisibleViewController() {
-                           InterstitialAdManager.shared.maybeShow(from: vc)
-                       } else {
-                           // 找不到可見 VC 時，至少先預載
-                           InterstitialAdManager.shared.preload()
-                       }
-
+                        InterstitialAdManager.shared.maybeShow(from: vc)
+                    } else {
+                        InterstitialAdManager.shared.preload()
+                    }
                 }
             }
         }
     }
 
-    // 將你的所有初始讀取都包在這個 function
+    // 初始讀取
     func reloadAllData() async {
-        // 1) 載入 summary
         if let s = loadSummary() {
             for (raw, cs) in s.categories {
                 if let cat = PhotoCategory(rawValue: raw) {
@@ -598,31 +655,24 @@ struct ContentView: View {
                 }
             }
         }
-        // 2) 載入分組（現場資產）供選取顯示數量/分
         for cat in PhotoCategory.allCases {
             let assets = await fetchAssetsAsync(for: cat)
             let chunks = splitAssetsByThousand(assets)
             categoryAssetChunks[cat] = chunks
-            if chunks.count > 1 {
-                selectedCategoryChunks[cat] = 0
-            }
-            // 這裡同步刷新「最新現場照片數」
-            await MainActor.run {
-                self.photoVM.categoryCounts[cat] = assets.count
-            }
-        }
-    }
-    
-    func refreshCategoryCounts() async {
-        for cat in PhotoCategory.allCases {
-            let assets = await fetchAssetsAsync(for: cat)
+            if chunks.count > 1 { selectedCategoryChunks[cat] = 0 }
             await MainActor.run {
                 self.photoVM.categoryCounts[cat] = assets.count
             }
         }
     }
 
-    
+    func refreshCategoryCounts() async {
+        for cat in PhotoCategory.allCases {
+            let assets = await fetchAssetsAsync(for: cat)
+            await MainActor.run { self.photoVM.categoryCounts[cat] = assets.count }
+        }
+    }
+
     func totalSelectedAssetsCount() -> Int {
         selectedCategories.reduce(0) { acc, cat in
             let chunks = categoryAssetChunks[cat] ?? []
@@ -630,27 +680,22 @@ struct ContentView: View {
             return acc + (chunks[safe: idx]?.count ?? 0)
         }
     }
-    
-    // MARK: - Chunk 掃描核心流程
+
+    // MARK: - 掃描
+
     func startChunkScan(selected: PhotoCategory?) {
         let categories = selected == nil ? PhotoCategory.allCases : [selected!]
         let chunkSnapshot = selectedCategoryChunks
         startScanMultiple(selected: categories, selectedChunks: chunkSnapshot)
     }
 
-
-    
-    
-    // -- 只保留與你的embedding函數相容
-    // 2) 順序正確、thread-safe 的 embedding 產生
+    // 埋點：批次抽 embedding
     func batchExtractEmbeddingsChunked(
         images: [UIImage],
         chunkSize: Int = 300,
         maxConcurrent: Int = 2
     ) async -> [[Float]] {
-
         var allEmbeddings = Array(repeating: [Float](), count: images.count)
-
         for base in stride(from: 0, to: images.count, by: chunkSize) {
             let upper = min(base + chunkSize, images.count)
             var next = base
@@ -675,8 +720,8 @@ struct ContentView: View {
         }
         return allEmbeddings
     }
-    
-    // 新的載圖 function：回傳成功的 (id, image)
+
+    // 一次載入多張縮圖
     func loadImagesWithIds(from assets: [PHAsset], maxConcurrent: Int = 8) async -> [(id: String, image: UIImage)] {
         let target = CGSize(width: 224, height: 224)
         var pairs = Array<(String, UIImage?)>(repeating: ("", nil), count: assets.count)
@@ -688,7 +733,7 @@ struct ContentView: View {
                     let asset = assets[idx]
                     let id = asset.localIdentifier
                     group.addTask {
-                        let img = await requestImageSync(asset, target: target, mode: .aspectFill)
+                        let img = requestImageSync(asset, target: target, mode: .aspectFill)
                         pairs[idx] = (id, img)
                     }
                 }
@@ -703,9 +748,6 @@ struct ContentView: View {
         }
     }
 
-
-    
-
     func fetchAssetsAsync(for category: PhotoCategory) async -> [PHAsset] {
         await withCheckedContinuation { continuation in
             fetchAssets(for: category) { assets in
@@ -713,68 +755,63 @@ struct ContentView: View {
             }
         }
     }
-    
+
     func currentSignature(for category: PhotoCategory) async -> LibrarySignature {
-        let assets = await fetchAssetsAsync(for: category) // 你已有
+        let assets = await fetchAssetsAsync(for: category)
         return makeSignature(for: assets)
     }
 
-    // 在「查看」將要開啟時呼叫
     func loadDetailIfAvailable(for category: PhotoCategory) async -> (assetIds: [String], groups: [[Int]])? {
         guard let detail = loadDetail(for: category) else { return nil }
         let nowSig = await currentSignature(for: category)
         if nowSig == detail.librarySignature {
             return (detail.assetIds, detail.lastGroups)
         } else {
-            // TODO: 視情況做增量，或先回傳舊資料 + 顯示「資料可能已過期」小標；或直接 nil
-            return (detail.assetIds, detail.lastGroups) // 先回傳舊資料，並在 UI 顯示「可能已過期」
+            return (detail.assetIds, detail.lastGroups) // 可能過期
         }
     }
-
 
     func saveScanResultsToLocal() {
         if let data = try? JSONEncoder().encode(scanResults) {
             UserDefaults.standard.set(data, forKey: scanResultsKey)
         }
     }
-    
+
     // ---- 取得該分類資產 ----
     func fetchAssets(for category: PhotoCategory, completion: @escaping ([PHAsset]) -> Void) {
         let options = PHFetchOptions()
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        
+
         switch category {
         case .selfie:
-            let collection = PHAssetCollection.fetchAssetCollections(
-                with: .smartAlbum,
-                subtype: .smartAlbumSelfPortraits,
-                options: nil)
+            let collection = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: .smartAlbumSelfPortraits, options: nil)
             var arr: [PHAsset] = []
             collection.enumerateObjects { col, _, _ in
                 let assets = PHAsset.fetchAssets(in: col, options: options)
                 assets.enumerateObjects { asset, _, _ in arr.append(asset) }
             }
             completion(arr)
+
         case .portrait:
             options.predicate = NSPredicate(format: "mediaSubtypes & %d != 0", PHAssetMediaSubtype.photoDepthEffect.rawValue)
             let fetchResult = PHAsset.fetchAssets(with: .image, options: options)
             var arr: [PHAsset] = []
             fetchResult.enumerateObjects { asset, _, _ in arr.append(asset) }
             completion(arr)
+
         case .screenshot:
             options.predicate = NSPredicate(format: "mediaSubtypes & %d != 0", PHAssetMediaSubtype.photoScreenshot.rawValue)
             let fetchResult = PHAsset.fetchAssets(with: .image, options: options)
             var arr: [PHAsset] = []
             fetchResult.enumerateObjects { asset, _, _ in arr.append(asset) }
             completion(arr)
+
         case .photo:
             let selfieCollection = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: .smartAlbumSelfPortraits, options: nil)
             var selfieIds: Set<String> = []
             selfieCollection.enumerateObjects { col, _, _ in
                 let selfieAssets = PHAsset.fetchAssets(in: col, options: nil)
-                selfieAssets.enumerateObjects { asset, _, _ in
-                    selfieIds.insert(asset.localIdentifier)
-                }
+                selfieAssets.enumerateObjects { asset, _, _ in selfieIds.insert(asset.localIdentifier) }
             }
             let allImages = PHAsset.fetchAssets(with: .image, options: options)
             var arr: [PHAsset] = []
@@ -782,66 +819,69 @@ struct ContentView: View {
                 let isSelfie = selfieIds.contains(asset.localIdentifier)
                 let isPortrait = asset.mediaSubtypes.contains(.photoDepthEffect)
                 let isScreenshot = asset.mediaSubtypes.contains(.photoScreenshot)
-                if !isSelfie && !isPortrait && !isScreenshot {
-                    arr.append(asset)
-                }
+                if !isSelfie && !isPortrait && !isScreenshot { arr.append(asset) }
             }
             completion(arr)
         }
-        
-
     }
+
+
     
-    
-    // FIX 版：使用「快照」的群組索引，避免插頁/重繪讓 group 回到 1
+
+    // MARK: - 掃描主流程（修正 scope 與模糊偵測位置）
+
     func startScanMultiple(selected: [PhotoCategory], selectedChunks: [PhotoCategory: Int]) {
         guard !selected.isEmpty else { return }
         isProcessing = true
-        
+
         Task {
-            await MainActor.run {
-                selected.forEach { processedCounts[$0] = 0 }
-            }
-            
+            await MainActor.run { selected.forEach { processedCounts[$0] = 0 } }
             var sessionDuplicatesFound = 0
-            
+
             for cat in selected {
                 let chunks = categoryAssetChunks[cat] ?? []
-                let chunkIdx = (chunks.count > 1) ? (selectedChunks[cat] ?? 0) : 0 // <-- 用快照
+                let chunkIdx = (chunks.count > 1) ? (selectedChunks[cat] ?? 0) : 0
                 let chunkAssets = chunks[safe: chunkIdx] ?? []
                 if chunkAssets.isEmpty { continue }
-                
+
                 var seen = Set<String>()
                 let uniqueAssets = chunkAssets
                     .filter { seen.insert($0.localIdentifier).inserted }
                     .sorted { ($0.creationDate ?? Date.distantPast) < ($1.creationDate ?? Date.distantPast) }
-                
-                await MainActor.run {
-                    photoVM.categoryCounts[cat] = uniqueAssets.count
-                }
-                
+
+                await MainActor.run { photoVM.categoryCounts[cat] = uniqueAssets.count }
+
                 let windowSize = 50
                 let chunkSize = 250
                 var prevTailEmbs: [[Float]] = []
                 var prevTailIds: [String] = []
                 let globalIds = uniqueAssets.map { $0.localIdentifier }
-                
+
                 var allGroups: [[Int]] = []
                 var allAssetIds: [String] = []
-                
+                var allBlurryGlobalIndices: [Int] = []   // ← 放在 per-category 作用域
+
                 for chunkStart in stride(from: 0, to: uniqueAssets.count, by: chunkSize) {
                     let chunkEnd = min(chunkStart + chunkSize, uniqueAssets.count)
                     let chunkSubAssets = Array(uniqueAssets[chunkStart..<chunkEnd])
-                    
+
                     let pairs = await loadImagesWithIds(from: chunkSubAssets)
                     let chunkIdsFiltered = pairs.map(\.id)
                     let images = pairs.map(\.image)
-                    
+
+                    // 模糊偵測：在取得 images 之後
+                    //for (localIdx, img) in images.enumerated() {
+                    //    if let score = laplacianVarianceScore(img), score < BLUR_VARIANCE_THRESHOLD {
+                    //        let globalIdx = chunkStart + localIdx
+                    //        allBlurryGlobalIndices.append(globalIdx)
+                    //    }
+                    //}
+
                     let embs = await batchExtractEmbeddingsChunked(images: images)
                     let allEmbs = prevTailEmbs + embs
                     let allIds  = prevTailIds + chunkIdsFiltered
                     var pairsIndices: [(Int, Int)] = []
-                    
+
                     for i in prevTailEmbs.count..<allEmbs.count {
                         for j in max(0, i - windowSize)..<i {
                             if cosineSimilarity(allEmbs[i], allEmbs[j]) >= 0.90 {
@@ -849,7 +889,7 @@ struct ContentView: View {
                             }
                         }
                     }
-                    
+
                     let globalPairs: [(Int, Int)] = pairsIndices.compactMap { pair in
                         let (localJ, localI) = pair
                         let idJ = allIds[localJ]
@@ -863,17 +903,17 @@ struct ContentView: View {
                     let groups = groupSimilarImages(pairs: globalPairs)
                     allGroups += groups
                     allAssetIds += chunkIdsFiltered
-                    
+
                     await MainActor.run {
                         scanResults[cat] = ScanResult(
                             date: Date(),
-                            duplicateCount: allGroups.flatMap{$0}.count,
+                            duplicateCount: allGroups.flatMap { $0 }.count,
                             lastGroups: allGroups,
                             assetIds: allAssetIds
                         )
                         processedCounts[cat, default: 0] += chunkSubAssets.count
                     }
-                    
+
                     if embs.count > windowSize {
                         prevTailEmbs = Array(embs.suffix(windowSize))
                         prevTailIds  = Array(chunkIdsFiltered.suffix(windowSize))
@@ -882,20 +922,25 @@ struct ContentView: View {
                         prevTailIds  = chunkIdsFiltered
                     }
                 }
-                
+
                 await MainActor.run {
                     scanResults[cat] = ScanResult(
                         date: Date(),
-                        duplicateCount: allGroups.flatMap{$0}.count,
+                        duplicateCount: allGroups.flatMap { $0 }.count,
                         lastGroups: allGroups,
                         assetIds: allAssetIds
                     )
+                    // 存模糊結果（一次即可）
+                    blurryResults[cat] = BlurryScanResult(
+                        date: Date(),
+                        assetIds: globalIds,
+                        blurryIndices: Array(Set(allBlurryGlobalIndices)).sorted()
+                    )
                     saveScanResultsToLocal()
-                    sessionDuplicatesFound += allGroups.flatMap{$0}.count
+                    sessionDuplicatesFound += allGroups.flatMap { $0 }.count
                 }
-                
+
                 let signature = makeSignature(for: uniqueAssets)
-                
                 let detail = ScanDetailV2(
                     category: cat.rawValue,
                     date: Date(),
@@ -904,17 +949,17 @@ struct ContentView: View {
                     librarySignature: signature
                 )
                 saveDetail(detail, for: cat)
-                
+
                 var existing = loadSummary() ?? PersistedScanSummaryV2(categories: [:])
                 existing.categories[cat.rawValue] = .init(
                     date: Date(),
-                    duplicateCount: allGroups.flatMap{$0}.count,
+                    duplicateCount: allGroups.flatMap { $0 }.count,
                     totalAssetsAtScan: uniqueAssets.count,
                     librarySignature: signature
                 )
                 saveSummary(existing)
             }
-            
+
             await MainActor.run {
                 isProcessing = false
                 totalDuplicatesFound = sessionDuplicatesFound
@@ -923,15 +968,13 @@ struct ContentView: View {
         }
     }
 
-
-    
     func loadScanResultsFromLocal() {
         if let data = UserDefaults.standard.data(forKey: scanResultsKey),
            let results = try? JSONDecoder().decode([PhotoCategory: ScanResult].self, from: data) {
             scanResults = results
         }
     }
-    
+
     func saveScanSummariesToDisk(_ summaries: PersistedScanSummaries) {
         Task.detached(priority: .background) {
             do {
@@ -942,7 +985,7 @@ struct ContentView: View {
             }
         }
     }
-    
+
     @MainActor
     func loadScanSummariesFromDisk() async -> PersistedScanSummaries {
         await withCheckedContinuation { cont in
@@ -950,8 +993,7 @@ struct ContentView: View {
                 do {
                     let url = summariesURL()
                     guard FileManager.default.fileExists(atPath: url.path) else {
-                        cont.resume(returning: [:])
-                        return
+                        cont.resume(returning: [:]); return
                     }
                     let data = try Data(contentsOf: url)
                     let decoded = try JSONDecoder().decode(PersistedScanSummaries.self, from: data)
@@ -963,11 +1005,9 @@ struct ContentView: View {
             }
         }
     }
-
-
-
-
 }
+
+// MARK: - 小工具
 
 func pairsFromGroups(_ groups: [[Int]]) -> [(Int, Int)] {
     var pairs: [(Int, Int)] = []
@@ -978,7 +1018,6 @@ func pairsFromGroups(_ groups: [[Int]]) -> [(Int, Int)] {
     }
     return pairs
 }
-
 
 func loadImagesForCategory(_ cat: PhotoCategory, scanResults: [PhotoCategory: ScanResult]) -> [UIImage] {
     guard let res = scanResults[cat] else { return [] }
@@ -1001,7 +1040,6 @@ func loadImagesForCategory(_ cat: PhotoCategory, scanResults: [PhotoCategory: Sc
     return out
 }
 
-/// 傳回：["Selfie": [[id1, id2, ...], [id1001, id1002, ...]], ...]
 func splitAssetsByThousand(_ assets: [PHAsset]) -> [[PHAsset]] {
     let chunkSize = 1000
     var result: [[PHAsset]] = []
@@ -1014,28 +1052,21 @@ func splitAssetsByThousand(_ assets: [PHAsset]) -> [[PHAsset]] {
     return result
 }
 
-
-
 final class PhotoLibraryWatcher: NSObject, PHPhotoLibraryChangeObserver, ObservableObject {
-    @Published var bump: Int = 0 // 讓 SwiftUI 刷一刷
-
+    @Published var bump: Int = 0
     override init() {
         super.init()
         PHPhotoLibrary.shared().register(self)
     }
     deinit { PHPhotoLibrary.shared().unregisterChangeObserver(self) }
-
     func photoLibraryDidChange(_ changeInstance: PHChange) {
-        DispatchQueue.main.async { [weak self] in
-            self?.bump &+= 1
-        }
+        DispatchQueue.main.async { [weak self] in self?.bump &+= 1 }
     }
 }
 
 // 假設你在 SimilarImagesView 有類別資訊 category
 func applyLocalDeletionToCache(category: PhotoCategory, deletedIDs: [String]) {
     guard var detail = loadDetail(for: category) else { return }
-    // 從 assetIds 裡刪除
     let toDelete = Set(deletedIDs)
     var newIndexMap: [Int: Int] = [:]
     var newAssetIds: [String] = []
@@ -1045,7 +1076,6 @@ func applyLocalDeletionToCache(category: PhotoCategory, deletedIDs: [String]) {
             newAssetIds.append(id)
         }
     }
-    // 轉換 lastGroups 的索引；無效或只剩一張的群組可移除
     var newGroups: [[Int]] = []
     for g in detail.lastGroups {
         let mapped = g.compactMap { newIndexMap[$0] }
@@ -1053,7 +1083,6 @@ func applyLocalDeletionToCache(category: PhotoCategory, deletedIDs: [String]) {
     }
     detail.assetIds   = newAssetIds
     detail.lastGroups = newGroups
-    // 更新 signature（可只更新 assetCount/first/last）
     detail.librarySignature = LibrarySignature(
         assetCount: newAssetIds.count,
         firstID: newAssetIds.first,
@@ -1061,10 +1090,8 @@ func applyLocalDeletionToCache(category: PhotoCategory, deletedIDs: [String]) {
     )
     saveDetail(detail, for: category)
 
-    // 若你有 summary，也同步扣掉數字
     if var s = loadSummary() {
         if var cs = s.categories[category.rawValue] {
-            // 這裡簡化：duplicateCount 重新用 newGroups 計算
             cs.duplicateCount = newGroups.flatMap{$0}.count
             cs.totalAssetsAtScan = newAssetIds.count
             cs.librarySignature = detail.librarySignature
@@ -1074,10 +1101,8 @@ func applyLocalDeletionToCache(category: PhotoCategory, deletedIDs: [String]) {
     }
 }
 
-
 #Preview {
     ContentView()
 }
-
 
 
