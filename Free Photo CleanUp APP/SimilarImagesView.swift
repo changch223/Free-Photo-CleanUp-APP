@@ -122,10 +122,10 @@ struct SimilarImagesView: View {
 
     private func showInterstitialAfterCoverDismissed() {
         // 等動畫/層級穩定
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-            let vc = UIApplication.shared.topMostVisibleViewController()
-            InterstitialAdManager.shared.showIfReady(from: vc, completion: nil)
-        }
+        //DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            //let vc = UIApplication.shared.topMostVisibleViewController()
+            //InterstitialAdManager.shared.showIfReady(from: vc, completion: nil)
+        //}
     }
 
 
@@ -244,11 +244,11 @@ struct SimilarImagesView: View {
                 onFinish: { keptGlobals in
                     selectedKeep[gIdx] = keptGlobals
                     reviewingGroupIndex = nil
-                    showInterstitialAfterCoverDismissed()
+                    //showInterstitialAfterCoverDismissed()
                 },
                 onCancel: {
                     reviewingGroupIndex = nil
-                    showInterstitialAfterCoverDismissed()
+                    //showInterstitialAfterCoverDismissed()
                 }
             )
         }

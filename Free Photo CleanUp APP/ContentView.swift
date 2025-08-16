@@ -94,9 +94,9 @@ struct ResultRowView: View, Equatable {
                 // B. 顯示給使用者點的按鈕：先插頁，後導頁
                 Button {
                     if let vc = UIApplication.shared.topMostVisibleViewController() {
-                            InterstitialAdManager.shared.showIfReady(from: vc){
+                            //InterstitialAdManager.shared.showIfReady(from: vc){
                             goDetail = true
-                        }
+                        //}
                     } else {
                         goDetail = true
                     }
@@ -227,19 +227,18 @@ extension ContentView {
                             ForEach(0..<chunkCountAll, id: \.self) { i in
                                 Button {
                                     selectedCategoryChunks[category] = i
-                                    // 如果已勾選，改變組時也要重新檢查合計數
-                                    if selectedCategories.contains(category) {
+                                    if isOverLimitCategory(category) {
+                                        didChangeChunk(for: category, to: i) // >1000 強制單選
+                                    } else if selectedCategories.contains(category) {
                                         let total = selectedCategories.reduce(0) { acc, cat in
                                             chunkCount(for: cat, idx: selectedCategoryChunks[cat] ?? 0) + acc
                                         }
                                         if total > 1000 {
                                             activeAlert = .overLimit(NSLocalizedString("alert_over_limit_msg", comment: ""))
-                                            // 自動取消這個分類
                                             selectedCategories.remove(category)
                                         }
                                     }
                                 } label: {
-                                    // 這裡才用 i+1 和 chunks[i].count
                                     Text(String(format: NSLocalizedString("chunk_title_count", comment: ""), i + 1, chunks[i].count))
                                 }
                             }
@@ -274,8 +273,15 @@ extension ContentView {
     
             
             Button(action: {
+                // 先快照目前的選擇
+                let selectedSnapshot = Array(selectedCategories)
+                let chunkSnapshot = selectedCategoryChunks
+                
                 runAfterInterstitial {
-                    startScanMultiple(selected: Array(selectedCategories))
+                    // 保險起見仍在主執行緒
+                    DispatchQueue.main.async {
+                        startScanMultiple(selected: selectedSnapshot, selectedChunks: chunkSnapshot)
+                    }
                 }
             }) {
                 // 原本的 label 一樣
@@ -484,12 +490,15 @@ struct ContentView: View {
     private func runAfterInterstitial(_ work: @escaping () -> Void) {
         DispatchQueue.main.async {
             if let vc = UIApplication.shared.topMostVisibleViewController() {
-                InterstitialAdManager.shared.showIfReady(from: vc, completion: work)
+                InterstitialAdManager.shared.showIfReady(from: vc) {
+                    DispatchQueue.main.async { work() }
+                }
             } else {
                 work()
             }
         }
     }
+
 
 
 
@@ -625,8 +634,10 @@ struct ContentView: View {
     // MARK: - Chunk 掃描核心流程
     func startChunkScan(selected: PhotoCategory?) {
         let categories = selected == nil ? PhotoCategory.allCases : [selected!]
-        startScanMultiple(selected: categories)
+        let chunkSnapshot = selectedCategoryChunks
+        startScanMultiple(selected: categories, selectedChunks: chunkSnapshot)
     }
+
 
     
     
@@ -782,55 +793,55 @@ struct ContentView: View {
     }
     
     
-    func startScanMultiple(selected: [PhotoCategory]) {
+    // FIX 版：使用「快照」的群組索引，避免插頁/重繪讓 group 回到 1
+    func startScanMultiple(selected: [PhotoCategory], selectedChunks: [PhotoCategory: Int]) {
         guard !selected.isEmpty else { return }
         isProcessing = true
-
+        
         Task {
             await MainActor.run {
                 selected.forEach { processedCounts[$0] = 0 }
             }
-
-            var sessionDuplicatesFound = 0 // <--- 新增：本次找到的總重複數
+            
+            var sessionDuplicatesFound = 0
             
             for cat in selected {
-                // 決定要掃描哪一組 chunk
                 let chunks = categoryAssetChunks[cat] ?? []
-                let chunkIdx = (chunks.count > 1) ? (selectedCategoryChunks[cat] ?? 0) : 0
+                let chunkIdx = (chunks.count > 1) ? (selectedChunks[cat] ?? 0) : 0 // <-- 用快照
                 let chunkAssets = chunks[safe: chunkIdx] ?? []
                 if chunkAssets.isEmpty { continue }
-
+                
                 var seen = Set<String>()
                 let uniqueAssets = chunkAssets
                     .filter { seen.insert($0.localIdentifier).inserted }
                     .sorted { ($0.creationDate ?? Date.distantPast) < ($1.creationDate ?? Date.distantPast) }
-
+                
                 await MainActor.run {
                     photoVM.categoryCounts[cat] = uniqueAssets.count
                 }
-
+                
                 let windowSize = 50
                 let chunkSize = 250
                 var prevTailEmbs: [[Float]] = []
                 var prevTailIds: [String] = []
                 let globalIds = uniqueAssets.map { $0.localIdentifier }
-
+                
                 var allGroups: [[Int]] = []
                 var allAssetIds: [String] = []
-
+                
                 for chunkStart in stride(from: 0, to: uniqueAssets.count, by: chunkSize) {
                     let chunkEnd = min(chunkStart + chunkSize, uniqueAssets.count)
                     let chunkSubAssets = Array(uniqueAssets[chunkStart..<chunkEnd])
-
+                    
                     let pairs = await loadImagesWithIds(from: chunkSubAssets)
                     let chunkIdsFiltered = pairs.map(\.id)
                     let images = pairs.map(\.image)
-
+                    
                     let embs = await batchExtractEmbeddingsChunked(images: images)
                     let allEmbs = prevTailEmbs + embs
                     let allIds  = prevTailIds + chunkIdsFiltered
                     var pairsIndices: [(Int, Int)] = []
-
+                    
                     for i in prevTailEmbs.count..<allEmbs.count {
                         for j in max(0, i - windowSize)..<i {
                             if cosineSimilarity(allEmbs[i], allEmbs[j]) >= 0.90 {
@@ -838,8 +849,7 @@ struct ContentView: View {
                             }
                         }
                     }
-
-                    // 只要一份 globalPairs + groups
+                    
                     let globalPairs: [(Int, Int)] = pairsIndices.compactMap { pair in
                         let (localJ, localI) = pair
                         let idJ = allIds[localJ]
@@ -853,8 +863,7 @@ struct ContentView: View {
                     let groups = groupSimilarImages(pairs: globalPairs)
                     allGroups += groups
                     allAssetIds += chunkIdsFiltered
-
-                    // --- 每個 chunk 即時刷新 ---
+                    
                     await MainActor.run {
                         scanResults[cat] = ScanResult(
                             date: Date(),
@@ -864,8 +873,7 @@ struct ContentView: View {
                         )
                         processedCounts[cat, default: 0] += chunkSubAssets.count
                     }
-
-                    // 尾部保留
+                    
                     if embs.count > windowSize {
                         prevTailEmbs = Array(embs.suffix(windowSize))
                         prevTailIds  = Array(chunkIdsFiltered.suffix(windowSize))
@@ -874,8 +882,7 @@ struct ContentView: View {
                         prevTailIds  = chunkIdsFiltered
                     }
                 }
-
-                // 結束時存到本地
+                
                 await MainActor.run {
                     scanResults[cat] = ScanResult(
                         date: Date(),
@@ -884,13 +891,11 @@ struct ContentView: View {
                         assetIds: allAssetIds
                     )
                     saveScanResultsToLocal()
-                    // <--- 這次的重複張數，加進 sessionDuplicatesFound
                     sessionDuplicatesFound += allGroups.flatMap{$0}.count
                 }
                 
-                // 在 startScanMultiple 的每個分類完成後：
                 let signature = makeSignature(for: uniqueAssets)
-
+                
                 let detail = ScanDetailV2(
                     category: cat.rawValue,
                     date: Date(),
@@ -899,8 +904,7 @@ struct ContentView: View {
                     librarySignature: signature
                 )
                 saveDetail(detail, for: cat)
-
-                // 更新 summary（先讀舊的，修改一個分類，再存回）
+                
                 var existing = loadSummary() ?? PersistedScanSummaryV2(categories: [:])
                 existing.categories[cat.rawValue] = .init(
                     date: Date(),
@@ -909,13 +913,11 @@ struct ContentView: View {
                     librarySignature: signature
                 )
                 saveSummary(existing)
-
             }
-
+            
             await MainActor.run {
                 isProcessing = false
-                // totalDuplicatesFound = scanResults.values.map { $0.duplicateCount }.reduce(0, +) // 舊
-                totalDuplicatesFound = sessionDuplicatesFound // <--- 新：只顯示這次掃描到的
+                totalDuplicatesFound = sessionDuplicatesFound
                 activeAlert = .finished(sessionDuplicatesFound)
             }
         }
