@@ -13,7 +13,8 @@
 
 
 "app_title" = "智慧照片清理";
-"app_subtitle" = "快速掃描並清除手機內重複的照片，釋放更多寶貴的儲存空間";
+"app_subtitle" = "快速掃描並刪除重複照片，釋放寶貴的儲存空間。模糊偵測仍在試用階段，目前對於螢幕截圖的檢測效果不佳";
+
 "category_select_title" = "選擇掃描類別";
 "category_limit_hint" = "最多只能選擇1000張照片";
 "progress_scanned" = "已掃描 %d / %d 張";
@@ -72,3 +73,8 @@
 "label_similar_photos" = "Similar photos"; // 依你需求保留英文原樣
 "label_blurry_photos"  = "模糊照片";
 "nav_title_blurry_group" = "模糊照片";
+
+"no_blurry_photos" = "沒有偵測到模糊照片";
+"btn_select_all" = "全選";
+"btn_deselect_all" = "全不選";
+"btn_delete_selected" = "刪除已選";

@@ -10,6 +10,7 @@ import Photos
 import UIKit
 
 /// 進入「查看」時的啟動器：先讀磁碟 detail，再轉去 SimilarImagesView
+// 進入「相似照片查看」：讀 detail -> 顯示 SimilarImagesView
 struct SimilarImagesEntryView: View {
     let category: PhotoCategory
     let inlineResult: ScanResult?
@@ -17,7 +18,7 @@ struct SimilarImagesEntryView: View {
     @State private var isLoading = true
     @State private var assetIds: [String] = []
     @State private var pairs: [(Int, Int)] = []
-    @State private var warningStale = false  // 可選：若 signature 不同可提示資料可能過期
+    @State private var warningStale = false
 
     var body: some View {
         Group {
@@ -31,10 +32,10 @@ struct SimilarImagesEntryView: View {
                     }
                 }
             } else if !assetIds.isEmpty {
-                // 沿用相似群組的檢視（預設模式：每組第一張勾選）
                 SimilarImagesView(
                     similarPairs: pairs,
-                    assetIds: assetIds
+                    assetIds: assetIds,
+                    titleKey: "nav_title_similar_group" // ← 相似照片標題
                 )
                 .overlay(alignment: .topTrailing) {
                     if warningStale {
@@ -60,25 +61,16 @@ struct SimilarImagesEntryView: View {
                 .padding(.top, 40)
             }
         }
-        .navigationTitle(String(format: NSLocalizedString("nav_title_blurry_group", comment: ""), category.localizedName))
         .task { await loadDetailOrFallback() }
     }
 
-    /// 讀 detail 檔；若無則退回 inline 結果
     private func loadDetailOrFallback() async {
-        // 先嘗試讀取磁碟
         if let detail = loadDetail(for: category) {
-            // 可選：與目前資料簽章比對，設 warning
-            // let nowSig = await currentSignature(for: category)
-            // warningStale = (nowSig != detail.librarySignature)
-
             assetIds = detail.assetIds
             pairs = pairsFromGroups(detail.lastGroups)
             isLoading = false
             return
         }
-
-        // 退回 inline（當次掃描還在記憶體中的資料）
         if let inline = inlineResult, !inline.assetIds.isEmpty {
             assetIds = inline.assetIds
             pairs = pairsFromGroups(inline.lastGroups)
@@ -90,6 +82,9 @@ struct SimilarImagesEntryView: View {
     }
 }
 
+
+
+
 /// 可同時支援：
 /// 1) 相似照片群組（使用 similarPairs）
 /// 2) 自訂群組（customGroups，例：模糊照片每張是一組）
@@ -97,24 +92,25 @@ struct SimilarImagesEntryView: View {
 struct SimilarImagesView: View {
     let similarPairs: [(Int, Int)]
     let assetIds: [String]
-
-    /// 若提供，將覆蓋相似群組；用於「模糊照片每張單獨一組」等情境
     let customGroups: [[Int]]?
-    /// 預設勾選策略：.first（每組預設勾第一張）、.none（全部不勾）
     enum DefaultKeepMode { case first, none }
     let defaultKeepMode: DefaultKeepMode
-
-    /// 與既有呼叫相容的便利 init（提供預設值）
+    
+    // 讓外層決定標題（預設相似照片）
+    let titleKey: LocalizedStringKey
+    
     init(
         similarPairs: [(Int, Int)],
         assetIds: [String],
         customGroups: [[Int]]? = nil,
-        defaultKeepMode: DefaultKeepMode = .first
+        defaultKeepMode: DefaultKeepMode = .first,
+        titleKey: LocalizedStringKey = "nav_title_similar_group"
     ) {
         self.similarPairs = similarPairs
         self.assetIds = assetIds
         self.customGroups = customGroups
         self.defaultKeepMode = defaultKeepMode
+        self.titleKey = titleKey              // ← 別忘了這行
     }
 
     static var imageCache = NSCache<NSString, UIImage>()
@@ -224,7 +220,7 @@ struct SimilarImagesView: View {
                     .frame(height: 50)
             }
         }
-        .navigationTitle("nav_title_similar_group")
+        .navigationTitle(titleKey)
         .onAppear {
             // 依預設模式建立初始勾選
             var initial: [Int: Set<Int>] = [:]

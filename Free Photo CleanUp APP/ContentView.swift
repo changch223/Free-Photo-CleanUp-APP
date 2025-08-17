@@ -8,6 +8,35 @@ import Photos
 import UIKit
 import Accelerate // vImage / vDSP
 import CoreImage   // ← 新增
+import StoreKit
+
+private var isFirstAppear = true          // 第一次進入頁面
+private var reviewAskCounter = 0          // 可簡單節流（可選）
+private let kLastReviewPromptDateKey = "LastReviewPromptDateKey"
+
+// 是否距離上次詢問已超過指定天數（預設 180 天）
+private func canAskForReviewAgain(minDays: Int = 180) -> Bool {
+    let defaults = UserDefaults.standard
+    guard let last = defaults.object(forKey: kLastReviewPromptDateKey) as? Date else {
+        return true // 從未問過 => 可以問
+    }
+    let now = Date()
+    let days = Calendar.current.dateComponents([.day], from: last, to: now).day ?? 0
+    return days >= minDays
+}
+
+// 實際觸發評分，並記錄時間（即使系統不一定會顯示，也先記錄避免頻繁觸發）
+private func requestAppReviewIfAppropriate() {
+    guard canAskForReviewAgain(minDays: 180) else { return }
+    if let scene = UIApplication.shared.connectedScenes
+        .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene {
+        SKStoreReviewController.requestReview(in: scene)
+        UserDefaults.standard.set(Date(), forKey: kLastReviewPromptDateKey)
+    }
+}
+
+
+
 
 // 可重用的 CIContext（關掉 color space 以避免額外轉換）
 private let sharedCIContext: CIContext = {
@@ -832,13 +861,27 @@ struct ContentView: View {
                             }
                         }
                     }
-                    if let vc = UIApplication.shared.topMostVisibleViewController() {
-                        InterstitialAdManager.shared.maybeShow(from: vc)
+
+                    // 👇 關鍵：只在第一次進入 ContentView 時才可能顯示 Interstitial
+                    if isFirstAppear {
+                        if let vc = UIApplication.shared.topMostVisibleViewController() {
+                            InterstitialAdManager.shared.maybeShow(from: vc)
+                        } else {
+                            InterstitialAdManager.shared.preload()
+                        }
+                        isFirstAppear = false
                     } else {
-                        InterstitialAdManager.shared.preload()
+                        // 從子頁（如 SimilarImagesEntryView / BlurryImagesEntryView）返回
+                        // 不顯示插頁式，保留 Banner，並適時詢問評分
+                        reviewAskCounter += 1
+                        // 從子頁返回 ContentView：不顯示插頁式，只顯示 Banner，並「可能」詢問評分
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                            requestAppReviewIfAppropriate()
+                        }
                     }
                 }
             }
+
         }
     }
 
@@ -1078,11 +1121,11 @@ struct ContentView: View {
                     for (localIdx, img) in images.enumerated() {
                         if isBlurryAdaptiveCenterWeighted(
                             img,
-                            varianceThreshold: 30,     // 60~90 看你要多嚴
-                            kStd: 0.5,                 // 0.8~1.5：越大越嚴格
-                            minSharpRatioGlobal: 0.08, // 全圖 12% 有明顯邊緣就不當模糊
-                            minSharpRatioCenter: 0.13, // 中央 25% 有明顯邊緣就不當模糊
-                            gaussianRadius: 0.4
+                            varianceThreshold: 40,     // 60~90 看你要多嚴
+                            kStd: 0.6,                 // 0.8~1.5：越大越嚴格
+                            minSharpRatioGlobal: 0.10, // 全圖 12% 有明顯邊緣就不當模糊
+                            minSharpRatioCenter: 0.15, // 中央 25% 有明顯邊緣就不當模糊
+                            gaussianRadius: 0.5
                         ) {
                             let globalIdx = chunkStart + localIdx
                             allBlurryGlobalIndices.append(globalIdx)
