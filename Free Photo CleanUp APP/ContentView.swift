@@ -681,6 +681,8 @@ extension View {
 // MARK: - ContentView
 
 struct ContentView: View {
+    @State private var shouldScrollToResults = false
+
     @State private var blurryResults: [PhotoCategory: BlurryScanResult] = [:]
 
     @State private var categoryCounts: [PhotoCategory: Int] = [:]
@@ -803,20 +805,35 @@ struct ContentView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 16) {
-                        headerView
-                            .padding(.top, 10)
-                            .card()
-                        categorySelectionView
-                            .card()
-                        globalProgressView
-                        scanResultsView
-                            .card()
-                        Spacer(minLength: 100)
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(spacing: 16) {
+                            headerView
+                                .padding(.top, 10)
+                                .card()
+                            categorySelectionView
+                                .card()
+                            globalProgressView
+
+                            // 給「掃描結果」區塊一個固定 id
+                            scanResultsView
+                                .card()
+                                .id("scanResults")
+
+                            Spacer(minLength: 100)
+                        }
+                        .padding(.horizontal, 8)
                     }
-                    .padding(.horizontal, 8)
+                    // 按下 OK 後觸發的捲動
+                    .onChange(of: shouldScrollToResults) { go in
+                        guard go else { return }
+                        withAnimation(.easeInOut) {
+                            proxy.scrollTo("scanResults", anchor: .top)
+                        }
+                        shouldScrollToResults = false
+                    }
                 }
+
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     VStack(spacing: 0) {
                         actionButtonsView
@@ -840,12 +857,14 @@ struct ContentView: View {
                         dismissButton: .default(Text("ok"))
                     )
                 case .finished(let dup, let blurry):
-                    // 這裡的文案會用 Localizable.strings（下段提供）
                     return Alert(
                         title: Text("alert_scan_done_title"),
                         message: Text(String(format: NSLocalizedString("alert_scan_done_message", comment: ""), dup, blurry)),
-                        dismissButton: .default(Text("ok"))
+                        dismissButton: .default(Text("ok")) {
+                            shouldScrollToResults = true
+                        }
                     )
+                    
                 }
             }
 
